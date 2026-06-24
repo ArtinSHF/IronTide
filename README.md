@@ -1,6 +1,6 @@
 # IronTide ⚔️
 
-<img width="1861" alt="Screenshot" src="screenshot.png" />
+<img width="1856" height="931" alt="Screenshot" src="https://github.com/user-attachments/assets/bbc4e915-ad28-4ec8-8919-cd0f8bae2554" />
 
 ---
 
@@ -12,7 +12,7 @@ The project was built as a personal experiment to learn real-time simulation arc
 
 IronTide runs online using Vercel.
 
-**Live site:** [your-vercel-link-here]
+**Live site:** https://iron-tide-beryl.vercel.app/
 
 ---
 
