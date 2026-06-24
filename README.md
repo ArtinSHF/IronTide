@@ -12,7 +12,7 @@ The project was built as a personal experiment to learn real-time simulation arc
 
 IronTide runs online using Vercel.
 
-**Live site:** [your-vercel-link-here]
+**Live site:** https://iron-tide-beryl.vercel.app/
 
 ---
 
