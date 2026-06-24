@@ -1,6 +1,6 @@
 # IronTide ⚔️
 
-<img width="1861" alt="Screenshot" src="screenshot.png" />
+<img width="1856" height="931" alt="Screenshot" src="https://github.com/user-attachments/assets/bbc4e915-ad28-4ec8-8919-cd0f8bae2554" />
 
 ---
 
