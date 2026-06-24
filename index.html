@@ -1,0 +1,2522 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Iron Tide</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:100%;height:100%;overflow:hidden}
+body{background:#060606;color:#ddd;font-family:'Courier New',monospace}
+
+/* ═══ MENU ═══════════════════════════════════════════════════ */
+#menu{
+  position:fixed;inset:0;z-index:1000;
+  display:flex;align-items:center;justify-content:center;
+  background:radial-gradient(ellipse at 50% 38%,#170404 0%,#060606 68%)
+}
+.mwrap{text-align:center;width:90%;max-width:460px}
+.gtitle{
+  font-size:clamp(52px,12vw,92px);font-weight:900;
+  letter-spacing:.12em;color:#c92020;
+  text-shadow:0 0 40px #c9202090,0 0 90px #c9202030;
+  margin-bottom:6px
+}
+.gsub{font-size:10px;letter-spacing:.36em;color:#888;text-transform:uppercase;margin-bottom:52px}
+#lmsg{color:#bbb;font-size:11px;letter-spacing:.2em;animation:pulse 1.5s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+#lbwrap{width:100%;height:2px;background:#222;margin-top:10px;display:none}
+#lbar{height:100%;background:#c92020;width:0;transition:width .3s}
+#selwrap{display:none}
+.sgrp{margin-bottom:22px;text-align:left}
+.slbl{display:block;font-size:9px;letter-spacing:.36em;color:#c92020;margin-bottom:8px}
+.sgrp select{
+  width:100%;padding:11px 14px;background:#0c0c0c;
+  border:1px solid #333;color:#ddd;
+  font-family:'Courier New',monospace;font-size:13px;cursor:pointer;outline:none
+}
+.sgrp select:focus{border-color:#c92020}
+.snote{font-size:10px;color:#999;margin-top:5px;letter-spacing:.08em}
+#sbtn{
+  width:100%;padding:15px;margin-top:6px;background:#c92020;
+  border:none;color:#fff;font-family:'Courier New',monospace;
+  font-size:13px;font-weight:bold;letter-spacing:.28em;cursor:pointer;
+  transition:background .2s,box-shadow .2s
+}
+#sbtn:hover:not(:disabled){background:#df2828;box-shadow:0 0 28px #c9202050}
+#sbtn:disabled{background:#1a1a1a;color:#555;cursor:not-allowed}
+
+/* ═══ GAME ════════════════════════════════════════════════════ */
+#game{position:fixed;inset:0;display:none}
+#map{width:100%;height:100%;background:#000}
+
+/* ═══ HUD PANELS — compact + readable ═════════════════════════ */
+.panel{
+  position:absolute;z-index:500;
+  background:rgba(8,8,8,.88);border:1px solid #2a2a2a;
+  backdrop-filter:blur(6px);
+  box-shadow:0 0 20px rgba(0,0,0,.55)
+}
+
+/* Casualties — top-left (compact) */
+#cas{top:12px;left:12px;padding:9px 13px;min-width:0}
+#cas h3{font-size:10px;letter-spacing:.22em;color:#c92020;margin-bottom:8px;font-weight:bold}
+.crow{display:flex;align-items:center;gap:9px;margin-bottom:6px}
+.crow:last-child{margin-bottom:0}
+.cico{width:22px;height:15px;flex-shrink:0;display:block;
+      border:1px solid #333;background:#222;object-fit:cover}
+.cnum{font-size:18px;font-weight:bold;color:#5e8eff;line-height:1}
+.csub{font-size:8px;color:#888;letter-spacing:.16em;margin-top:2px}
+.crow.enemy .cnum{color:#ff5050}
+
+/* Player info — top-right (compact) */
+#info{top:12px;right:12px;padding:9px 13px;min-width:180px;text-align:right}
+.ilbl{font-size:9px;letter-spacing:.22em;color:#aaa;margin-bottom:4px}
+.ival{font-size:22px;font-weight:bold;color:#5e8eff;line-height:1}
+.imax{font-size:10px;color:#888;margin-top:3px}
+.barw{width:100%;height:3px;background:#222;margin-top:7px}
+.barf{height:100%;background:#5e8eff;transition:width .3s}
+.rlbl{font-size:9px;color:#7fa6e0;margin-top:6px;letter-spacing:.1em}
+.olbl{font-size:9px;color:#ffea4a;margin-top:4px;letter-spacing:.1em}
+
+/* Date — top-center */
+#datepanel{
+  top:12px;left:50%;transform:translateX(-50%);
+  padding:7px 18px;font-size:16px;font-weight:bold;
+  letter-spacing:.14em;color:#ddd
+}
+
+/* Controls — bottom-center */
+#ctrl{
+  bottom:12px;left:50%;transform:translateX(-50%);
+  padding:7px 12px;display:flex;align-items:center;gap:7px
+}
+.cbtn{
+  padding:5px 10px;background:#101010;border:1px solid #333;
+  color:#aaa;font-family:'Courier New',monospace;font-size:10px;
+  letter-spacing:.12em;cursor:pointer;transition:all .15s
+}
+.cbtn:hover{border-color:#c92020;color:#fff}
+.cbtn.on{background:#c92020;color:#fff;border-color:#c92020}
+.csep{width:1px;height:12px;background:#333}
+.spdlbl{font-size:9px;color:#888;letter-spacing:.18em}
+#cancelbtn{border-color:#5e8eff;color:#5e8eff;display:none}
+#cancelbtn:hover{background:#5e8eff;color:#000}
+
+/* Video player — bottom-left, small + unobtrusive, muted clip loop */
+#vidwrap{
+  bottom:12px;left:12px;
+  width:300px;height:169px;     /* 16:9 — standard YouTube landscape format, kept small on screen */
+  padding:0;overflow:hidden;
+  opacity:1;transition:opacity 1s ease;
+}
+#vidwrap video{
+  width:100%;height:100%;
+  object-fit:cover;display:block;background:#000;
+}
+
+/* ═══ ATTACK / DEPLOY MODAL ═══════════════════════════════════ */
+#atk{
+  position:absolute;inset:0;z-index:600;
+  background:rgba(0,0,0,.72);display:none;
+  align-items:center;justify-content:center
+}
+.abox{
+  background:#0d0d0d;border:1px solid #c92020;
+  padding:22px 26px;min-width:330px;max-width:420px;
+  box-shadow:0 0 48px rgba(200,32,32,.28)
+}
+.abox.move{border-color:#5e8eff;box-shadow:0 0 48px rgba(94,142,255,.28)}
+.abox h3{font-size:13px;letter-spacing:.24em;color:#c92020;margin-bottom:8px}
+.abox.move h3{color:#5e8eff}
+#ainf{font-size:12px;color:#bbb;margin-bottom:16px;line-height:1.7}
+#ainf b{color:#fff}
+#ainf img{width:20px;height:14px;vertical-align:middle;border:1px solid #333;margin-right:4px}
+.pctrow{display:flex;justify-content:space-between;
+  font-size:9px;color:#888;letter-spacing:.1em;margin-bottom:4px}
+#aslider{width:100%;accent-color:#c92020;cursor:pointer;margin-bottom:8px}
+.abox.move #aslider{accent-color:#5e8eff}
+#acnt{font-size:26px;font-weight:bold;color:#fff;text-align:center;margin-bottom:18px;line-height:1.2}
+#acnt span{font-size:12px;color:#888;display:block;margin-top:3px}
+.abtns{display:flex;gap:9px}
+.abtns button{
+  flex:1;padding:11px;border:1px solid #333;
+  font-family:'Courier New',monospace;font-size:11px;
+  letter-spacing:.18em;cursor:pointer;transition:all .15s
+}
+#ago{background:#c92020;color:#fff;border-color:#c92020}
+#ago:hover{background:#df2828}
+.abox.move #ago{background:#5e8eff;border-color:#5e8eff}
+.abox.move #ago:hover{background:#7fa6ff}
+#ano{background:transparent;color:#bbb}
+#ano:hover{color:#fff;border-color:#666}
+
+/* ═══ END SCREEN ══════════════════════════════════════════════ */
+#end{
+  position:absolute;inset:0;z-index:700;
+  background:rgba(0,0,0,.94);display:none;
+  align-items:center;justify-content:center
+}
+.ebox{text-align:center;padding:48px;border:1px solid #2a2a2a;background:#0a0a0a}
+#etitle{font-size:clamp(38px,8vw,68px);letter-spacing:.12em;margin-bottom:14px}
+#estats{font-size:12px;color:#bbb;margin-bottom:32px;letter-spacing:.08em;line-height:2.2}
+#estats img{width:20px;height:14px;vertical-align:middle;border:1px solid #333}
+.ebtn{
+  padding:14px 38px;background:#c92020;border:none;
+  color:#fff;font-family:'Courier New',monospace;
+  font-size:11px;letter-spacing:.28em;cursor:pointer
+}
+.ebtn:hover{background:#df2828}
+
+/* ═══ MAP OVERLAYS ════════════════════════════════════════════ */
+.tlbl{
+  font-family:'Arial Black',Arial,sans-serif;
+  font-size:26px;
+  font-weight:900;color:#fff;
+  text-shadow:
+    -4px -4px 0 #000, 4px -4px 0 #000,
+    -4px  4px 0 #000, 4px  4px 0 #000,
+    -4px  0   0 #000, 4px  0   0 #000,
+     0   -4px 0 #000,  0   4px 0 #000,
+     0 0 24px rgba(0,0,0,.9);
+  white-space:nowrap;pointer-events:none;
+  transform:translateX(-50%) translateY(-50%);
+  transition:transform .3s ease;
+  line-height:1
+}
+.fico{
+  width:22px;height:15px;display:block;
+  border:1px solid rgba(0,0,0,.9);
+  box-shadow:0 0 4px rgba(0,0,0,.8);
+  pointer-events:none;background:#222;
+  transition:width .38s ease, height .38s ease, opacity .4s ease;
+}
+/* Applied transiently (JS-controlled) only while a flag is actually
+   gliding to a new cell, so combat/move-order repositioning animates
+   smoothly instead of teleporting — and is removed right after, so it
+   never affects normal map panning/zooming. */
+.flagWrap.flagMoving{
+  transition: transform .46s ease;
+}
+.focusring{
+  width:42px;height:42px;border-radius:50%;
+  border:2px dashed #ff5050;
+  box-shadow:0 0 24px rgba(255,80,80,.6), inset 0 0 12px rgba(255,80,80,.35);
+  pointer-events:none;
+  animation:focuspulse 1.4s ease-in-out infinite;
+}
+.musterring{
+  width:42px;height:42px;border-radius:50%;
+  border:2px dashed #5e8eff;
+  box-shadow:0 0 24px rgba(94,142,255,.6), inset 0 0 12px rgba(94,142,255,.35);
+  pointer-events:none;
+  animation:focuspulse 1.4s ease-in-out infinite;
+}
+@keyframes focuspulse{
+  0%,100%{transform:translate(-50%,-50%) scale(1);opacity:.85}
+  50%    {transform:translate(-50%,-50%) scale(1.18);opacity:.45}
+}
+.enemyfocusring{
+  width:42px;height:42px;border-radius:50%;
+  border:2px dashed #ff9d2b;
+  box-shadow:0 0 24px rgba(255,157,43,.6), inset 0 0 12px rgba(255,157,43,.35);
+  pointer-events:none;
+  animation:focuspulse 1.4s ease-in-out infinite;
+}
+.menuFlag{width:18px;height:12px;vertical-align:middle;
+  border:1px solid #444;margin-right:6px;object-fit:cover}
+</style>
+</head>
+<body>
+
+<!-- ══════════════ MENU ══════════════ -->
+<div id="menu">
+  <div class="mwrap">
+    <div class="gtitle">IRON TIDE</div>
+    <div class="gsub">Choose your nation · Deploy your forces · Conquer</div>
+    <div id="lmsg">▸ LOADING WORLD DATA...</div>
+    <div id="lbwrap"><div id="lbar"></div></div>
+    <div id="selwrap">
+      <div class="sgrp">
+        <span class="slbl">YOUR NATION</span>
+        <select id="psel"><option value="">— SELECT —</option></select>
+      </div>
+      <div class="sgrp">
+        <span class="slbl">ENEMY NATION</span>
+        <select id="esel" disabled><option value="">— SELECT YOUR NATION FIRST —</option></select>
+        <div class="snote" id="bnote">Enemy must share a land border</div>
+      </div>
+      <button id="sbtn" disabled onclick="startGame()">▶ DEPLOY FORCES</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════ GAME ══════════════ -->
+<div id="game">
+  <div id="map"></div>
+
+  <!-- Casualties — top-left -->
+  <div class="panel" id="cas">
+    <h3>CASUALTIES</h3>
+    <div class="crow">
+      <img class="cico" id="pico" alt="">
+      <div><div class="cnum" id="pcas">0</div><div class="csub">YOUR LOSSES</div></div>
+    </div>
+    <div class="crow enemy">
+      <img class="cico" id="eico" alt="">
+      <div><div class="cnum" id="ecas">0</div><div class="csub">ENEMY LOSSES</div></div>
+    </div>
+  </div>
+
+  <!-- Player info — top-right -->
+  <div class="panel" id="info">
+    <div class="ilbl">YOUR FORCES</div>
+    <div class="ival" id="pval">—</div>
+    <div class="imax" id="pmax">/ — MAX</div>
+    <div class="barw"><div class="barf" id="pbar" style="width:50%"></div></div>
+    <div class="rlbl" id="rlbl">REGEN: —</div>
+    <div class="olbl" id="olbl">NO ACTIVE ORDER</div>
+    <div class="olbl" id="ealert" style="display:none;color:#ff9d2b">⚠ ENEMY OFFENSIVE — TROOPS DEFENDING</div>
+  </div>
+
+  <!-- Date — top-center -->
+  <div class="panel" id="datepanel"><span id="datestr">2020/01/01</span></div>
+
+  <!-- Controls — bottom-center -->
+  <div class="panel" id="ctrl">
+    <button class="cbtn" id="mbtn" onclick="toggleMute()">🔊 MUTE</button>
+    <div class="csep"></div>
+    <span class="spdlbl">SPEED</span>
+    <button class="cbtn on" id="s1" onclick="setSpeed(1)">1×</button>
+    <button class="cbtn"    id="s2" onclick="setSpeed(2)">2×</button>
+    <button class="cbtn"    id="s3" onclick="setSpeed(3)">3×</button>
+    <div class="csep"></div>
+    <button class="cbtn" id="cancelbtn" onclick="cancelOrder()">✕ STAND DOWN</button>
+    <div class="csep"></div>
+    <button class="cbtn" id="surrenderbtn" onclick="surrender()">⚫ SURRENDER</button>
+  </div>
+
+  <!-- Video player — bottom-right -->
+  <div class="panel" id="vidwrap">
+    <video id="vidplayer" muted playsinline></video>
+  </div>
+
+  <!-- Attack / Move modal -->
+  <div id="atk">
+    <div class="abox" id="abox">
+      <h3 id="atitle">⚔ COMMIT FORCES</h3>
+      <div id="ainf">—</div>
+      <div class="pctrow" id="pctrow"><span>1%</span><span id="pctmid">SEND PERCENTAGE</span><span>99%</span></div>
+      <input type="range" id="aslider" min="1" max="99" step="1" value="50" oninput="updSlider()"/>
+      <div id="acnt">— <span>— TROOPS</span></div>
+      <div class="abtns">
+        <button id="ago" onclick="confirmAction()">COMMIT</button>
+        <button id="ano" onclick="closeAtk()">CANCEL</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- End screen -->
+  <div id="end">
+    <div class="ebox">
+      <div id="etitle">—</div>
+      <div id="estats">—</div>
+      <button class="ebtn" onclick="location.reload()">MAIN MENU</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/topojson@3/dist/topojson.min.js"></script>
+<script>
+// ╔═══════════════════════════════════════════════════════════════╗
+// ║  IRON TIDE — order-driven build                                ║
+// ║                                                                ║
+// ║  • Player country fills BLUE, enemy fills RED.                 ║
+// ║  • Both countries are diced into a fine GRID OF CELLS, which   ║
+// ║    is invisible (no borders / grid lines shown). Only the      ║
+// ║    coloured territory and the front line are visible.          ║
+// ║  • Combat is mostly order-driven, plus one autonomous channel: ║
+// ║      – Click ENEMY land → opens an ATTACK ORDER modal.         ║
+// ║        Confirm and your troops push toward that point.         ║
+// ║      – Click YOUR OWN land → opens a MOVE ORDER modal. Your    ║
+// ║        troops redeploy (muster) toward that point — use it to  ║
+// ║        retreat, regroup, or shift reserves before an attack.   ║
+// ║        Pulling troops off the border weakens it for real: the  ║
+// ║        enemy can then advance into ground you've abandoned.    ║
+// ║      – The ENEMY AI periodically decides to attack on its own, ║
+// ║        independent of anything the player does. While that's  ║
+// ║        active, the player's troops near the contested front    ║
+// ║        automatically defend / reclaim their own lost land —    ║
+// ║        but never automatically invade the enemy's territory.   ║
+// ║        Only an explicit player order can do that.              ║
+// ╚═══════════════════════════════════════════════════════════════╝
+
+const AUDIO_FILE = "Media/audio.MP3";
+const VIDEO_FILES = ["Media/Video 1.mp4", "Media/Video 2.mp4", "Media/Video 3.mp4"];
+const FLAG_URL   = iso2 => `https://flagcdn.com/w40/${iso2.toLowerCase()}.png`;
+
+// ── CONSTANTS ─────────────────────────────────────────────────────
+const C = {
+  TROOP_PCT:    0.25,
+  TROOP_CAP:    80_000_000,
+  START_PCT:    0.50,
+
+  // ─ cell grid (MUCH denser for smooth borders) ─
+  CELL_TARGET:  7000,         // aim for ~7000 cells inside both countries
+  CELL_MIN:     0.03,
+  CELL_MAX:     0.80,
+
+  // ─ frontier combat ─
+  COMBAT_MS:    240,
+  BASE_FLIP:    0.055,        // base per-tick flip chance at the front
+  FOCUS_DECAY:  0.55,         // exp falloff distance (degrees) of pressure
+  FOCUS_BOOST:  4.0,          // pressure multiplier exactly at the focus
+  TROOPS_PER_FLIP:        1200,
+  ATTACKER_LOSS_PER_FLIP:  800,
+  DEFENDER_LOSS_PER_FLIP: 1300,
+  COUNTER_LOSS_PER_FLIP:   700,
+
+  // ─ FIX 3: proportional casualty scaling — losses are now a fraction
+  // of each side's MAX army so small nations and superpowers bleed at
+  // the same relative rate instead of small armies dying in minutes.
+  // ATTACKER_LOSS_FRAC / DEFENDER_LOSS_FRAC replace the fixed values
+  // above everywhere they appeared in combat functions.
+  // TROOPS_PER_FLIP_FRAC scales the commit-pool drain the same way.
+  ATTACKER_LOSS_FRAC:   0.000015,  // attacker bleeds ~0.0015 % of their max per flip
+  DEFENDER_LOSS_FRAC:   0.000022,  // defender bleeds ~0.0022 % of their max per flip
+  COUNTER_LOSS_FRAC:    0.000010,  // counter-attacker bleeds ~0.001 % of their max per flip
+  TROOPS_PER_FLIP_FRAC: 0.000030,  // commit pool drains ~0.003 % of attacker max per flip
+
+  // ─ troop-ratio combat scaling — steep on purpose: a big numerical
+  // advantage should dominate, a big disadvantage should rarely do
+  // more than nibble. COMBAT_RATIO_MIN is the floor for a totally
+  // outnumbered side (never quite zero — they can still get lucky
+  // sometimes); COMBAT_RATIO_MAX is the ceiling for a dominant side.
+  COMBAT_RATIO_MIN:        0.05,
+  COMBAT_RATIO_MAX:        3.20,   // raised: 2.5× advantage now gives a clear edge
+  COMBAT_RATIO_POW:        2.2,   // higher = punishes being outnumbered harder
+  COMBAT_BUDGET_FLOOR:     0.12,  // weak side also gets fewer attempts per tick, not just lower odds
+
+  // ─ retreat / move orders ─
+  MOVE_ORDER_COMMIT_PCT:   0.6,   // fixed share of troops that muster on retreat (no slider)
+  RETREAT_CEDE_FRACTION:   0.30,  // share of the NEAREST frontier sector ceded instantly on retreat
+
+  // ─ flag density (soldiers represented per flag, by army size) ─
+  FLAG_TIER1_MAX:     1_000_000,  // below this →  1 flag per FLAG_DIV_LOW
+  FLAG_TIER2_MAX:     5_000_000,  // below this →  1 flag per FLAG_DIV_MID
+  FLAG_DIV_LOW:          10_000,  // else        → 1 flag per FLAG_DIV_HIGH
+  FLAG_DIV_MID:         100_000,
+  FLAG_DIV_HIGH:        500_000,
+  FLAG_INTERIOR_RATIO:     0.15,  // share of flags scattered away from the front
+  FLAG_BASE_W:                22, // baseline icon size in px (at nominal density)
+  FLAG_BASE_H:                15,
+  FLAG_MIN_PX:                14,
+  FLAG_MAX_PX:                32,
+  FLAG_FADE_MS:              380, // fade in/out duration for flag count changes
+
+  // ─ autonomous enemy AI offensives ─
+  AI_ATTACK_CHECK_MS:        2000,  // how often the AI re-rolls the dice
+  AI_ATTACK_CHANCE:          0.12,  // flat chance per roll — rolls happen more often at higher speed (sim-time clock), not via a bigger per-roll chance
+  AI_ATTACK_MIN_COMMIT_PCT:  0.12,
+  AI_ATTACK_MAX_COMMIT_PCT:  0.30,
+  AI_ATTACK_MIN_DURATION_MS: 14000,
+  AI_ATTACK_MAX_DURATION_MS: 26000,
+  AI_ATTACK_MIN_TROOPS_FRAC: 0.05,  // AI won't attack below 5% of its max strength
+  AI_ATTACK_GRACE_MS:        12000, // no AI attacks for the first few seconds
+
+  // ─ generic ─
+  REGEN_MS:     1000,
+  REGEN_RATE:   0.0010,
+  REGEN_MULT_SMOOTH: 0.05,    // how fast regen rate eases toward the held-territory level
+  DATE_START:   new Date('2020-01-01T00:00:00Z'),
+  MS_PER_DAY:   1000,
+  LERP_DISP:    0.08,
+
+  // ─ colours ─
+  COL_PLAYER:   '#3060d8',    // blue (YOU)
+  COL_ENEMY:    '#d83030',    // red  (ENEMY)
+  COL_FRONT:    '#ffe7a0',
+};
+
+// ── POPULATION FALLBACK (real 2023-ish figures) ──────────────────
+const POP_FALLBACK = {
+  CHN:1410000000,IND:1428000000,USA:334000000,IDN:277000000,PAK:240000000,
+  NGA:223000000,BRA:216000000,BGD:172000000,RUS:144000000,MEX:128000000,
+  ETH:126000000,JPN:124000000,PHL:117000000,EGY:112000000,COD:102000000,
+  VNM:98000000,IRN:89000000,TUR:85000000,DEU:84000000,THA:71000000,
+  GBR:67700000,FRA:65000000,TZA:67000000,ZAF:60400000,ITA:59000000,
+  KEN:55000000,MMR:54000000,COL:52000000,KOR:51700000,UGA:48000000,
+  SDN:48000000,ESP:48000000,ARG:46000000,DZA:45000000,IRQ:45000000,
+  AFG:42000000,POL:38000000,CAN:39000000,MAR:37000000,SAU:36000000,
+  UKR:36000000,AGO:36000000,UZB:35000000,YEM:34000000,PER:34000000,
+  MYS:34000000,GHA:34000000,MOZ:33000000,NPL:30500000,VEN:28000000,
+  MDG:30000000,CMR:28000000,CIV:28000000,AUS:26000000,NER:27000000,
+  LKA:22000000,BFA:23000000,MLI:22000000,RWA:14000000,KAZ:20000000,
+  MWI:21000000,CHL:19500000,ROU:19000000,TCD:18000000,SOM:18000000,
+  GTM:18000000,SEN:17700000,NLD:17600000,KHM:17000000,ZWE:16500000,
+  ECU:17800000,GIN:14000000,SSD:11000000,BEN:13000000,TUN:12000000,
+  BOL:12000000,BEL:11700000,HTI:11700000,CUB:11000000,JOR:11300000,
+  BDI:13000000,CZE:10500000,DOM:11200000,HND:10600000,SWE:10500000,
+  TJK:10000000,PNG:10300000,AZE:10100000,AUT:9100000,ARE:9900000,
+  ISR:9700000,HUN:9700000,LAO:7700000,CHE:8800000,TGO:8800000,
+  HKG:7500000,SRB:6700000,BGR:6800000,BLR:9400000,LBY:6800000,
+  PRY:6800000,KGZ:7000000,SLV:6400000,NIC:6800000,LBN:5500000,
+  TKM:6400000,SGP:5900000,DNK:5900000,FIN:5500000,SVK:5400000,
+  NOR:5500000,COG:6100000,CAF:5700000,LBR:5400000,IRL:5000000,
+  PSE:5500000,OMN:5100000,NZL:5100000,CRI:5200000,MRT:4900000,
+  PAN:4400000,KWT:4300000,GEO:3700000,URY:3400000,MNG:3400000,
+  ARM:2800000,JAM:2800000,QAT:3000000,ALB:2800000,LTU:2700000,
+  GMB:2700000,GNB:2100000,MDA:2600000,GAB:2400000,NAM:2600000,
+  BWA:2700000,LSO:2300000,MKD:2100000,SVN:2100000,LVA:1900000,
+  GNQ:1700000,BHR:1500000,TTO:1500000,EST:1300000,TLS:1300000,
+  MUS:1300000,CYP:1200000,SWZ:1200000,DJI:1100000,FJI:910000,
+  COM:850000,BTN:780000,SLB:740000,LUX:660000,MNE:620000,
+  MAC:680000,SUR:620000,CPV:580000,MLT:530000,BRN:450000,
+  BHS:410000,ISL:380000,MDV:520000,BLZ:410000,BRB:280000,
+  VUT:320000,STP:230000,WSM:220000,LCA:180000,KIR:130000,
+  GUM:170000,FSM:110000,GRD:125000,VCT:110000,TON:107000,
+  SYC:100000,ATG:94000,AND:80000,DMA:73000,KNA:53000,
+  MCO:39000,LIE:39000,MHL:42000,MAF:38000,SMR:34000,
+  PLW:18000,COK:17000,NRU:13000,TUV:12000,VAT:800,
+  NIU:1900,TCA:46000,ASM:55000,VGB:31000,SXM:42000,
+  GIB:33000,FRO:54000,CYM:68000,BMU:64000,GRL:56000,
+  IMN:84000,SHN:5400,FLK:3500,
+  TWN:23500000,PRK:26000000,XKX:1800000,ESH:610000,
+  SYR:23000000,SOL:18000000
+};
+
+// ── STATE ─────────────────────────────────────────────────────────
+const S = {
+  countries: {},
+  pCode: null, eCode: null,
+  cas: { p: 0, e: 0 },
+
+  // ─ cell-grid combat ─
+  cells: [],
+  cellByXY: new Map(),
+  cellLayer: null,
+
+  // ─ orders (ONLY way combat / movement happens) ─
+  attackOrder: null,      // { lat, lng, commit, marker } — player-issued
+  moveOrder:   null,      // { lat, lng, expires, marker, commit } — kept for compat
+  retreatOrder: null,     // { lat, lng, retreatCells, lineLayer, enemyDirLat, enemyDirLng } — new retreat system
+  enemyAttackOrder: null, // { lat, lng, commit, marker, until } — AI-issued
+  enemyRetreatOrder: null,// { retreatCells, lineLayer, enemyDirLat, enemyDirLng } — AI retreat
+  aiNextRollAt: 0,        // next time the enemy AI is allowed to roll for an attack
+
+  // ─ display ─
+  flagPools: { player: [], enemy: [] }, // persistent flag markers (fade/resize, never popped)
+  labelMarkers: {},
+  countryLayers: {},
+  frontLineLayer: null,
+  cellSide: 0.3,           // avg cell width/height in degrees, set in buildCellGrid()
+
+  speed: 1, muted: false, over: false,
+  audio: null,
+  vidIndex: 0,
+  gameStartMs: 0,
+  simMs: 0,
+  disp: { pTroops: 0, pCas: 0, eCas: 0 },
+};
+let map;
+
+// ── UTILS ─────────────────────────────────────────────────────────
+const $    = id => document.getElementById(id);
+const fmt  = n  => Math.round(Math.max(0, n)).toLocaleString();
+const lerp = (a, b, t) => a + (b - a) * t;
+const clamp= (v, a, b) => v < a ? a : v > b ? b : v;
+
+// ── POINT-IN-POLYGON (ray casting, supports MultiPolygon) ────────
+function pointInRing(pt, ring){
+  let inside = false;
+  const [x, y] = pt;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const xi = ring[i][0], yi = ring[i][1];
+    const xj = ring[j][0], yj = ring[j][1];
+    const intersect = ((yi > y) !== (yj > y)) &&
+      (x < (xj - xi) * (y - yi) / (yj - yi + 1e-12) + xi);
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+function pointInFeature(lonlat, feat){
+  const g = feat.geometry;
+  if (!g) return false;
+  if (g.type === 'Polygon'){
+    if (!pointInRing(lonlat, g.coordinates[0])) return false;
+    for (let i=1;i<g.coordinates.length;i++)
+      if (pointInRing(lonlat, g.coordinates[i])) return false;
+    return true;
+  }
+  if (g.type === 'MultiPolygon'){
+    for (const poly of g.coordinates){
+      if (pointInRing(lonlat, poly[0])){
+        let inHole = false;
+        for (let i=1;i<poly.length;i++)
+          if (pointInRing(lonlat, poly[i])) { inHole = true; break; }
+        if (!inHole) return true;
+      }
+    }
+  }
+  return false;
+}
+function featureBBox(feat){
+  let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
+  const each = ring => { for (const [x,y] of ring){
+    if (x<minX) minX=x; if (y<minY) minY=y;
+    if (x>maxX) maxX=x; if (y>maxY) maxY=y;
+  }};
+  const g = feat.geometry;
+  if (g.type === 'Polygon') g.coordinates.forEach(each);
+  else if (g.type === 'MultiPolygon') g.coordinates.forEach(p => p.forEach(each));
+  return [minX,minY,maxX,maxY];
+}
+function combinedBBox(featA, featB){
+  const [a1,a2,a3,a4] = featureBBox(featA);
+  const [b1,b2,b3,b4] = featureBBox(featB);
+  return [Math.min(a1,b1), Math.min(a2,b2), Math.max(a3,b3), Math.max(a4,b4)];
+}
+
+// ── DATA LOADING ──────────────────────────────────────────────────
+async function boot() {
+  const msg = $('lmsg'), bar = $('lbar');
+  $('lbwrap').style.display = 'block';
+  try {
+    msg.textContent = '▸ LOADING MAP...';
+    bar.style.width = '10%';
+
+    const [topoRes, wcRes] = await Promise.all([
+      fetch('https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json'),
+      fetch('https://cdn.jsdelivr.net/npm/world-countries/countries.json'),
+    ]);
+
+    bar.style.width = '60%';
+    msg.textContent = '▸ BUILDING WORLD...';
+
+    const world = await topoRes.json();
+    const wcArr = await wcRes.json();
+    bar.style.width = '85%';
+
+    const feats  = topojson.feature(world, world.objects.countries).features;
+    const byNum  = {};
+    for (const rc of wcArr) {
+      const n = String(rc.ccn3 || '').padStart(3, '0');
+      if (n !== '000') byNum[n] = rc;
+    }
+
+    for (const feat of feats) {
+      const rc = byNum[String(feat.id).padStart(3, '0')];
+      if (!rc) continue;
+      const pop = POP_FALLBACK[rc.cca3] || rc.population || 5_000_000;
+      const max = Math.min(Math.floor(pop * C.TROOP_PCT), C.TROOP_CAP);
+      const ctr = rc.latlng?.length === 2 ? [rc.latlng[0], rc.latlng[1]] : [0, 0];
+      S.countries[rc.cca3] = {
+        name: rc.name.common, iso2: rc.cca2,
+        flagUrl: FLAG_URL(rc.cca2),
+        pop, max, troops: 0,
+        ctrl: 'neutral',
+        borders: rc.borders || [],
+        ctr, feat,
+      };
+    }
+
+    bar.style.width = '100%';
+    setTimeout(() => {
+      $('lmsg').style.display   = 'none';
+      $('lbwrap').style.display = 'none';
+      fillMenu();
+      $('selwrap').style.display = 'block';
+    }, 300);
+  } catch (err) {
+    msg.textContent = '✕ LOAD FAILED — CHECK CONNECTION';
+    msg.style.color = '#c92020';
+    console.error(err);
+  }
+}
+
+// ── MENU ──────────────────────────────────────────────────────────
+function fillMenu() {
+  const opts = Object.entries(S.countries)
+    .map(([k, v]) => ({ k, name: v.name }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const ps = $('psel');
+  opts.forEach(({ k, name }) => {
+    const o = document.createElement('option');
+    o.value = k; o.textContent = name; ps.appendChild(o);
+  });
+  ps.onchange = () => { S.pCode = ps.value || null; rebuildEnemy(); };
+}
+
+function rebuildEnemy() {
+  const es = $('esel'), note = $('bnote');
+  es.innerHTML = '<option value="">— SELECT —</option>';
+  es.disabled = true; S.eCode = null; $('sbtn').disabled = true;
+  if (!S.pCode) return;
+  const borders = (S.countries[S.pCode]?.borders || []).filter(b => S.countries[b]);
+  if (!borders.length) {
+    note.textContent = '⚠ No land borders — pick another';
+    note.style.color = '#c92020'; return;
+  }
+  note.textContent = `${borders.length} countries share a land border`;
+  note.style.color = '';
+  es.disabled = false;
+  borders.map(k => ({ k, name: S.countries[k].name }))
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .forEach(({ k, name }) => {
+      const o = document.createElement('option');
+      o.value = k; o.textContent = name; es.appendChild(o);
+    });
+  es.onchange = () => { S.eCode = $('esel').value || null; $('sbtn').disabled = !S.eCode; };
+}
+
+// ── CELL GRID GENERATION ─────────────────────────────────────────
+// Dense, invisible grid that quantises both countries into many small
+// square cells. Each cell stores its rectangular outline, its centre,
+// its 4-neighbour adjacency and its current owner.
+//
+// Ownership is decided from multiple sample points per cell (not just
+// the centre) so a jagged/complex coastline doesn't accidentally leave
+// a cell with no owner at all. Any slot that's still unowned after that
+// but is almost fully boxed in by one consistent owner is folded into
+// that owner too — this is what stops small holes in the mosaic from
+// sitting there forever as uncapturable "empty" land that neither side
+// can ever claim.
+function buildCellGrid(){
+  const pc = S.countries[S.pCode], ec = S.countries[S.eCode];
+  const [minX,minY,maxX,maxY] = combinedBBox(pc.feat, ec.feat);
+
+  const w = maxX - minX, h = maxY - minY;
+  // Land typically fills <40% of the union bbox, so over-shoot the
+  // target count to land near CELL_TARGET *land* cells.
+  let side = Math.sqrt((w * h) / (C.CELL_TARGET * 2.6));
+  side = clamp(side, C.CELL_MIN, C.CELL_MAX);
+
+  const nX = Math.ceil(w / side);
+  const nY = Math.ceil(h / side);
+  const dx = w / nX, dy = h / nY;
+  S.cellSide = (dx + dy) / 2;
+
+  // First pass: figure out just the owner of every grid slot (no cell
+  // objects yet) using several sample points per cell.
+  const SAMPLES = [[0.5,0.5], [0.18,0.18], [0.82,0.18], [0.18,0.82], [0.82,0.82]];
+  const ownerGrid = new Map(); // "ix,iy" -> 'player' | 'enemy'
+  for (let iy = 0; iy < nY; iy++){
+    for (let ix = 0; ix < nX; ix++){
+      const x0 = minX + ix * dx, y0 = minY + iy * dy;
+      let pHits = 0, eHits = 0;
+      for (const [ox, oy] of SAMPLES){
+        const px = x0 + dx * ox, py = y0 + dy * oy;
+        if (pointInFeature([px, py], pc.feat)) pHits++;
+        else if (pointInFeature([px, py], ec.feat)) eHits++;
+      }
+      if (pHits === 0 && eHits === 0) continue; // genuinely outside both — sea / unrelated land
+      ownerGrid.set(ix + ',' + iy, pHits >= eHits ? 'player' : 'enemy');
+    }
+  }
+
+  // Gap-fill pass: an unowned slot that's mostly enclosed by one
+  // consistent owner belongs to that owner too. Repeat a few times so
+  // multi-cell-deep holes fill in from the outside-in.
+  for (let pass = 0; pass < 4; pass++){
+    let filledAny = false;
+    for (let iy = 0; iy < nY; iy++){
+      for (let ix = 0; ix < nX; ix++){
+        const key = ix + ',' + iy;
+        if (ownerGrid.has(key)) continue;
+        const around = [[ix-1,iy],[ix+1,iy],[ix,iy-1],[ix,iy+1]]
+          .map(([nx, ny]) => ownerGrid.get(nx + ',' + ny))
+          .filter(Boolean);
+        if (around.length < 3) continue; // only fold in slots that are mostly boxed-in
+        if (around.every(o => o === around[0])){
+          ownerGrid.set(key, around[0]);
+          filledAny = true;
+        }
+      }
+    }
+    if (!filledAny) break;
+  }
+
+  S.cells = [];
+  S.cellByXY = new Map();
+  for (const [key, owner] of ownerGrid){
+    const [ix, iy] = key.split(',').map(Number);
+    const x0 = minX + ix * dx, y0 = minY + iy * dy;
+    const cx = x0 + dx * 0.5, cy = y0 + dy * 0.5;
+    const origCountry = owner === 'player' ? S.pCode : S.eCode;
+    const cell = {
+      ix, iy,
+      c:   [cy, cx],
+      poly:[
+        [y0,        x0],
+        [y0,        x0 + dx],
+        [y0 + dy,   x0 + dx],
+        [y0 + dy,   x0],
+      ],
+      owner,
+      origCountry,
+      neighbors: [],
+    };
+    S.cells.push(cell);
+    S.cellByXY.set(key, cell);
+  }
+  for (const cell of S.cells){
+    const {ix, iy} = cell;
+    const cands = [[ix-1,iy],[ix+1,iy],[ix,iy-1],[ix,iy+1]];
+    for (const [nx, ny] of cands){
+      const nb = S.cellByXY.get(nx + ',' + ny);
+      if (nb) cell.neighbors.push(nb);
+    }
+  }
+}
+
+function recountCells(){
+  for (const c of Object.values(S.countries)){
+    c.cellsHeld = 0; c.cellsOrigTotal = 0;
+  }
+  let pOwned = 0, eOwned = 0;
+  for (const cell of S.cells){
+    const orig = S.countries[cell.origCountry];
+    orig.cellsOrigTotal++;
+    const origSide = orig.ctrl === 'neutral'
+      ? (cell.origCountry === S.pCode ? 'player' : 'enemy')
+      : orig.ctrl;
+    if (cell.owner === origSide) orig.cellsHeld++;
+    if (cell.owner === 'player') pOwned++;
+    if (cell.owner === 'enemy' ) eOwned++;
+  }
+  S.cellsP = pOwned; S.cellsE = eOwned;
+}
+
+function frontierCellsOf(side){
+  const other = side === 'player' ? 'enemy' : 'player';
+  const out = [];
+  for (const cell of S.cells){
+    if (cell.owner !== side) continue;
+    if (cell.neighbors.some(nb => nb.owner === other)) out.push(cell);
+  }
+  return out;
+}
+
+// ── START GAME ────────────────────────────────────────────────────
+function startGame() {
+  if (!S.pCode || !S.eCode) return;
+
+  for (const [k, c] of Object.entries(S.countries)) {
+    if (k === S.pCode)      { c.ctrl = 'player'; c.troops = Math.floor(c.max * C.START_PCT); c.regenMult = 1; }
+    else if (k === S.eCode) { c.ctrl = 'enemy';  c.troops = Math.floor(c.max * C.START_PCT); c.regenMult = 1; }
+  }
+
+  const pc = S.countries[S.pCode], ec = S.countries[S.eCode];
+
+  $('pico').src = pc.flagUrl;
+  $('eico').src = ec.flagUrl;
+  $('pmax').textContent = `/ ${fmt(pc.max)} MAX`;
+  $('rlbl').textContent = `REGEN: +${fmt(Math.floor(pc.max * C.REGEN_RATE))}/s`;
+
+  S.disp.pTroops = pc.troops;
+  S.disp.pCas = 0; S.disp.eCas = 0;
+  S.gameStartMs = Date.now();
+  S.simMs = 0;
+  S.aiNextRollAt = C.AI_ATTACK_GRACE_MS;
+
+  $('menu').style.display = 'none';
+  $('game').style.display = 'block';
+
+  initMap();
+  buildCellGrid();
+  recountCells();
+  renderCells();
+  renderFlagsAndLabels();
+  refreshOrderHUD();
+  initAudio();
+  initVideo();
+  startLoops();
+  requestAnimationFrame(smoothFrame);
+}
+
+// ── MAP ───────────────────────────────────────────────────────────
+function initMap() {
+  const pc = S.countries[S.pCode], ec = S.countries[S.eCode];
+  map = L.map('map', {
+    center: [(pc.ctr[0]+ec.ctr[0])/2, (pc.ctr[1]+ec.ctr[1])/2],
+    zoom: 4,
+    zoomControl: false, attributionControl: false,
+    doubleClickZoom: false,
+  });
+
+  L.tileLayer(
+    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    { maxZoom: 12, minZoom: 2 }
+  ).addTo(map);
+  L.control.zoom({ position: 'bottomright' }).addTo(map);
+
+  // Light country outlines (cosmetic).
+  for (const [k, c] of Object.entries(S.countries)) {
+    if (c.ctrl === 'neutral') continue;
+    const lyr = L.geoJSON(c.feat, {
+      style: { fillColor:'#000', fillOpacity:0, color:'#fff', weight:1.4, opacity:.55 },
+      interactive: false,
+    }).addTo(map);
+    S.countryLayers[k] = lyr;
+  }
+
+  // Map click → open the appropriate order modal.
+  map.on('click', e => {
+    if (S.over) return;
+    openOrderModal(e.latlng);
+  });
+}
+
+// ── RENDER CELLS ──────────────────────────────────────────────────
+// Cells are coloured by ownership (blue / red), with NO visible
+// borders. As cells flip, only their fill colour updates — together
+// the cells form a smooth coloured mass without revealing the grid.
+function styleForCell(cell){
+  const fill = cell.owner === 'player' ? C.COL_PLAYER : C.COL_ENEMY;
+  // Yellow outline ONLY on cells adjacent to enemy territory (border cells).
+  // Interior cells (fully surrounded by same-owner cells) have no outline,
+  // matching the original look while ensuring surrounded/encircled cells
+  // that genuinely border the enemy always show the outline.
+  const enemySide = cell.owner === 'player' ? 'enemy' : 'player';
+  const isBorder  = cell.neighbors.some(nb => nb.owner === enemySide);
+  return {
+    fillColor: fill,
+    fillOpacity: 0.45,
+    color:   isBorder ? C.COL_FRONT : fill,
+    weight:  isBorder ? 0.7 : 0,
+    opacity: isBorder ? 0.65 : 0,
+    interactive: false,
+  };
+}
+function renderCells(){
+  if (!S.cellLayer){
+    S.cellLayer = L.layerGroup().addTo(map);
+    for (const cell of S.cells){
+      cell.layer = L.polygon(cell.poly, styleForCell(cell)).addTo(S.cellLayer);
+    }
+  } else {
+    for (const cell of S.cells){
+      cell.layer.setStyle(styleForCell(cell));
+    }
+  }
+}
+// Re-style a set of cells AND their immediate neighbours so that any
+// frontier-status change caused by a flip (border ↔ interior) is always
+// caught even for cells one ring away from the flipped cell.  This is
+// what eliminates the "missing yellow outline" bug: a cell that just
+// BECAME a border cell because its neighbour flipped is now also
+// refreshed, not just the cell that actually changed ownership.
+function refreshCells(cells){
+  const seen = new Set();
+  const apply = (cell) => {
+    if (!cell || seen.has(cell)) return;
+    seen.add(cell);
+    cell.layer?.setStyle(styleForCell(cell));
+  };
+  for (const cell of cells){
+    apply(cell);
+    for (const nb of (cell.neighbors || [])) apply(nb);
+  }
+}
+
+// ── ORDER MODAL ──────────────────────────────────────────────────
+// A SINGLE click on the map opens the appropriate order modal.
+//   • Click on enemy land    → ATTACK ORDER (red modal, troop % slider).
+//   • Click on your own land → RETREAT/MOVE ORDER (blue modal, fixed %).
+//   • Click on sea / neutral → ignored.
+function openOrderModal(latlng){
+  const pc = S.countries[S.pCode];
+  if (!pc || pc.troops < 500) return;
+
+  const target = nearestAnyCell([latlng.lat, latlng.lng]);
+  if (!target) return; // outside both countries → ignore
+
+  const isAttack = target.owner === 'enemy';
+
+  S.pending = {
+    lat: target.c[0],
+    lng: target.c[1],
+    type: isAttack ? 'attack' : 'move',
+  };
+
+  const box = $('abox');
+  const ec  = S.countries[S.eCode];
+  const slider = $('aslider'), pctrow = $('pctrow');
+  if (isAttack){
+    box.classList.remove('move');
+    $('atitle').textContent = '⚔ ATTACK ORDER';
+    $('ainf').innerHTML =
+      `<img src="${ec.flagUrl}" alt=""> Push toward <b>${ec.name}</b> sector<br>
+       <span style="color:#888">Your front line will surge toward the marker. Without this order, your troops will hold their positions.</span>`;
+    slider.style.display = '';
+    pctrow.style.display = '';
+    slider.value = 50;
+    updSlider();
+  } else {
+    box.classList.add('move');
+    $('atitle').textContent = '⇄ RETREAT ORDER';
+    $('ainf').innerHTML =
+      `<img src="${pc.flagUrl}" alt=""> New defensive line — <b>${pc.name}</b><br>
+       <span style="color:#888">A retreat line is drawn here. All forces forward of it withdraw gradually while the enemy advances at heavy cost. Troops hold once they reach the new line.</span>`;
+    // Retreats use no percentage slider — it's a territory-based withdrawal.
+    slider.style.display = 'none';
+    pctrow.style.display = 'none';
+    $('acnt').innerHTML = `RETREAT<span>All forward forces withdraw to this line</span>`;
+  }
+  $('atk').style.display = 'flex';
+}
+function updSlider() {
+  const pct    = +$('aslider').value;
+  const troops = Math.floor((S.countries[S.pCode]?.troops || 0) * pct / 100);
+  $('acnt').innerHTML = `${pct}%<span>${fmt(troops)} troops committed</span>`;
+}
+function closeAtk() { $('atk').style.display = 'none'; S.pending = null; }
+
+function confirmAction(){
+  if (!S.pending) return;
+  const isAttack = S.pending.type === 'attack';
+  const pct = isAttack ? (+$('aslider').value / 100) : C.MOVE_ORDER_COMMIT_PCT;
+  const pc  = S.countries[S.pCode];
+  const commit = Math.max(500, Math.floor(pc.troops * pct));
+  if (commit > pc.troops - 200) { closeAtk(); return; }
+
+  pc.troops -= commit;
+
+  if (isAttack){
+    // Cancel any prior move/retreat order — you can have ONE active order.
+    clearMoveOrder();
+    clearRetreatOrder();
+    // Issue / refresh the attack order.
+    if (S.attackOrder){
+      S.attackOrder.lat = S.pending.lat;
+      S.attackOrder.lng = S.pending.lng;
+      S.attackOrder.commit += commit;
+      // Update intensity to the latest slider position so the player can
+      // change attack power mid-battle by issuing a new order.
+      S.attackOrder.intensityFrac = pct;
+      if (S.attackOrder.marker) S.attackOrder.marker.setLatLng([S.pending.lat, S.pending.lng]);
+    } else {
+      const icon = L.divIcon({
+        className:'', iconAnchor:[0,0],
+        html:`<div class="focusring"></div>`
+      });
+      const marker = L.marker([S.pending.lat, S.pending.lng],
+                              { icon, zIndexOffset: 950, interactive:false }).addTo(map);
+      S.attackOrder = {
+        lat: S.pending.lat, lng: S.pending.lng,
+        commit, marker,
+        // intensityFrac is the slider value (0.01–0.99).  It directly
+        // scales per-cell flip probability AND max flips per tick so
+        // committing 1% genuinely feels weaker than committing 99%.
+        intensityFrac: pct,
+      };
+    }
+  } else {
+    // RETREAT ORDER — cancel any active attack. No troops are deducted;
+    // this is a territory-based withdrawal, not a committed force.
+    // Refund the commit we deducted above since retreat doesn't use it.
+    pc.troops += commit;
+    clearAttackOrder(true);
+    clearMoveOrder();
+    clearRetreatOrder();
+    startRetreat(S.pending.lat, S.pending.lng);
+  }
+
+  refreshOrderHUD();
+  closeAtk();
+}
+
+// Cancel current attack order, optionally refunding the unspent
+// commit pool back into stationed troops (used when the player
+// changes their mind and issues a different order).
+function clearAttackOrder(refund){
+  if (!S.attackOrder) return;
+  if (refund){
+    const pc = S.countries[S.pCode];
+    pc.troops += Math.max(0, S.attackOrder.commit);
+  }
+  if (S.attackOrder.marker && map.hasLayer(S.attackOrder.marker))
+    map.removeLayer(S.attackOrder.marker);
+  S.attackOrder = null;
+}
+function clearMoveOrder(){
+  if (!S.moveOrder) return;
+  const pc = S.countries[S.pCode];
+  pc.troops += Math.max(0, S.moveOrder.commit);
+  if (S.moveOrder.marker && map.hasLayer(S.moveOrder.marker))
+    map.removeLayer(S.moveOrder.marker);
+  S.moveOrder = null;
+}
+// Retreating has a real, immediate cost: the stretch of YOUR frontier
+// closest to the muster point — the sector you're pulling back from —
+// is ceded to the enemy right away. Only that local sector (plus a
+// small organic buffer so the new edge isn't a razor-straight cut)
+// changes hands; the rest of the front is untouched.
+function applyRetreatCession(){
+  if (!S.moveOrder) return;
+  const fronts = frontierCellsOf('player');
+  if (!fronts.length) return;
+
+  const withDist = fronts.map(c => ({
+    c, d: Math.hypot(c.c[0] - S.moveOrder.lat, c.c[1] - S.moveOrder.lng),
+  }));
+  withDist.sort((a, b) => a.d - b.d);
+
+  const cedeCount = Math.max(1, Math.round(fronts.length * C.RETREAT_CEDE_FRACTION));
+  const core = withDist.slice(0, cedeCount).map(x => x.c);
+  const coreSet = new Set(core);
+
+  // Small natural buffer: a few cells directly touching the ceded
+  // core also go, so the new edge looks organic rather than a clean
+  // geometric cut.
+  const buffer = [];
+  for (const c of core){
+    for (const nb of c.neighbors){
+      if (nb.owner === 'player' && !coreSet.has(nb) && Math.random() < 0.35){
+        buffer.push(nb);
+      }
+    }
+  }
+
+  const changed = [];
+  for (const c of core.concat(buffer)){
+    c.owner = 'enemy';
+    changed.push(c);
+    for (const nb of c.neighbors) changed.push(nb);
+  }
+
+  if (changed.length){
+    refreshCells(changed);
+    recountCells();
+    checkWin();
+  }
+}
+// Ends the enemy AI's own attack (naturally, on expiry/depletion — the
+// player never controls this). Any unspent commit pool is refunded to
+// the enemy's troop pool.
+function clearEnemyAttackOrder(refund){
+  if (!S.enemyAttackOrder) return;
+  if (refund){
+    const ec = S.countries[S.eCode];
+    ec.troops += Math.max(0, S.enemyAttackOrder.commit);
+  }
+  if (S.enemyAttackOrder.marker && map.hasLayer(S.enemyAttackOrder.marker))
+    map.removeLayer(S.enemyAttackOrder.marker);
+  S.enemyAttackOrder = null;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// ║  FIX 4 — RETREAT SYSTEM                                         ║
+// ║  Retreat is now a LINE order (not a single point marker).        ║
+// ║  Clicking own territory draws a dashed defensive line across the  ║
+// ║  territory. All player cells "forward" of that line (between it   ║
+// ║  and the enemy) are gradually handed to the enemy over several   ║
+// ║  ticks. Player casualties during the withdrawal are minimal;     ║
+// ║  the enemy advancing into vacated ground suffers heavily.        ║
+// ║  Once all forward cells are ceded, troops hold the new line.     ║
+// ║  The enemy AI will rarely trigger the same behaviour.            ║
+// ═══════════════════════════════════════════════════════════════════
+
+// Compute direction vector from (lat,lng) toward the average position
+// of ALL currently enemy-owned cells, normalised to unit length.
+function enemyDirectionFrom(lat, lng){
+  const eCells = S.cells.filter(c => c.owner === 'enemy');
+  if (!eCells.length) return { dLat: 0, dLng: 1 };
+  let eLat = 0, eLng = 0;
+  for (const c of eCells){ eLat += c.c[0]; eLng += c.c[1]; }
+  eLat /= eCells.length; eLng /= eCells.length;
+  const dLat = eLat - lat, dLng = eLng - lng;
+  const len  = Math.sqrt(dLat*dLat + dLng*dLng) || 1;
+  return { dLat: dLat/len, dLng: dLng/len };
+}
+
+// All player cells whose position is "forward" of the retreat line,
+// i.e. on the enemy side of it.  Uses the dot product along the
+// unit direction-to-enemy vector.
+function computeRetreatCells(lat, lng, dLat, dLng){
+  return S.cells.filter(c => {
+    if (c.owner !== 'player') return false;
+    const cLat = c.c[0] - lat, cLng = c.c[1] - lng;
+    return (cLat * dLat + cLng * dLng) > 0;
+  });
+}
+
+// Draw a dashed polyline perpendicular to the enemy direction through
+// (lat, lng), spanning the full width of the player's territory.
+function drawRetreateLineLayer(lat, lng, dLat, dLng, color){
+  // Perpendicular direction (rotate 90°): swap & negate
+  const perpLat = -dLng, perpLng = dLat;
+  const ext = 6; // extend 6° each way
+  const pts = [
+    [lat + perpLat * ext, lng + perpLng * ext],
+    [lat - perpLat * ext, lng - perpLng * ext],
+  ];
+  return L.polyline(pts, {
+    color,
+    weight: 3.5,
+    opacity: 0.92,
+    dashArray: '14 8',
+    lineCap: 'butt',
+    interactive: false,
+  }).addTo(map);
+}
+
+// Kick off a player retreat to the line at (lat, lng).
+function startRetreat(lat, lng){
+  const dir = enemyDirectionFrom(lat, lng);
+  const retreatCells = computeRetreatCells(lat, lng, dir.dLat, dir.dLng);
+  if (!retreatCells.length){
+    // Nothing forward of this line — already holding here, nothing to do.
+    return;
+  }
+  const lineLayer = drawRetreateLineLayer(lat, lng, dir.dLat, dir.dLng, '#5e8eff');
+  S.retreatOrder = {
+    lat, lng,
+    retreatCells,
+    lineLayer,
+    enemyDirLat: dir.dLat,
+    enemyDirLng: dir.dLng,
+  };
+}
+
+// Clear the player's retreat order (used by cancelOrder / completion).
+function clearRetreatOrder(){
+  if (!S.retreatOrder) return;
+  if (S.retreatOrder.lineLayer && map.hasLayer(S.retreatOrder.lineLayer))
+    map.removeLayer(S.retreatOrder.lineLayer);
+  S.retreatOrder = null;
+}
+
+// Called from combatTick — gradually cedes cells in the retreat zone.
+// Uses a projection-based wavefront so every section of the front
+// retreats at the same pace simultaneously (no sequential left-to-right).
+function retreatTick(){
+  const order = S.retreatOrder;
+  if (!order) return;
+  const pc = S.countries[S.pCode];
+  const ec = S.countries[S.eCode];
+
+  // All retreat-zone cells still held by the player.
+  const stillOwned = order.retreatCells.filter(c => c.owner === 'player');
+  if (stillOwned.length === 0){
+    clearRetreatOrder();
+    refreshOrderHUD();
+    return;
+  }
+
+  // Sort by forward projection along the enemy-direction vector:
+  // cells that are most "forward" (closest to the enemy) come first.
+  // Sorting ALL owned retreat cells this way means EVERY section of
+  // the front contributes to each tick's batch simultaneously —
+  // a uniform wavefront rather than one flank retreating at a time.
+  stillOwned.sort((a, b) => {
+    const aP = a.c[0]*order.enemyDirLat + a.c[1]*order.enemyDirLng;
+    const bP = b.c[0]*order.enemyDirLat + b.c[1]*order.enemyDirLng;
+    return bP - aP; // descending: most forward first
+  });
+
+  // Cede ~5 % of the remaining retreat zone per tick — gradual but
+  // uniform across all fronts.
+  const cedeCount = Math.max(1, Math.ceil(stillOwned.length * 0.05));
+  const changed = [];
+
+  for (let i = 0; i < cedeCount; i++){
+    const c = stillOwned[i];
+    c.owner = 'enemy';
+    changed.push(c);
+    for (const nb of c.neighbors) changed.push(nb);
+
+    // Retreating player: barely any casualties.
+    const pLoss = pc.max * 0.0000008 * (0.4 + Math.random() * 0.6);
+    // Enemy advancing into contested ground: heavy toll.
+    const eLoss = ec.max * 0.000014  * (0.7 + Math.random() * 0.6);
+    pc.troops = Math.max(0, pc.troops - pLoss);
+    ec.troops = Math.max(0, ec.troops - eLoss);
+    S.cas.p += pLoss;
+    S.cas.e += eLoss;
+  }
+
+  if (changed.length){ refreshCells(changed); recountCells(); checkWin(); }
+}
+
+// ── ENEMY AI RETREAT ──────────────────────────────────────────────
+// Rarely, when the enemy is badly outnumbered, the AI falls back to a
+// new defensive line inside its own territory.
+function maybeStartAIRetreat(){
+  if (S.over || S.enemyRetreatOrder || S.enemyAttackOrder) return;
+  const ec = S.countries[S.eCode];
+  const pc = S.countries[S.pCode];
+  const ratio = ec.troops / (ec.troops + pc.troops + 1);
+  if (ratio > 0.28) return; // only retreat when heavily outnumbered
+  if (Math.random() > 0.0015) return;
+
+  // Pick a retreat point: roughly 1/3 of the way from the enemy front
+  // back into enemy territory — far enough to matter, not so far that
+  // the AI surrenders half its country at once.
+  const eFronts = frontierCellsOf('enemy');
+  if (!eFronts.length) return;
+  const eCells = S.cells.filter(c => c.owner === 'enemy');
+  if (!eCells.length) return;
+
+  let fLat = 0, fLng = 0;
+  for (const c of eFronts){ fLat += c.c[0]; fLng += c.c[1]; }
+  fLat /= eFronts.length; fLng /= eFronts.length;
+  let cLat = 0, cLng = 0;
+  for (const c of eCells){ cLat += c.c[0]; cLng += c.c[1]; }
+  cLat /= eCells.length; cLng /= eCells.length;
+
+  // Retreat to ~35% of the way from front toward territory centre.
+  const retLat = fLat + (cLat - fLat) * 0.35;
+  const retLng = fLng + (cLng - fLng) * 0.35;
+
+  const nearest = nearestAnyCell([retLat, retLng]);
+  if (!nearest || nearest.owner !== 'enemy') return;
+
+  startEnemyRetreat(retLat, retLng);
+}
+
+function startEnemyRetreat(lat, lng){
+  // Enemy direction from AI's retreat point is toward the PLAYER.
+  const pCells = S.cells.filter(c => c.owner === 'player');
+  if (!pCells.length) return;
+  let pLat = 0, pLng = 0;
+  for (const c of pCells){ pLat += c.c[0]; pLng += c.c[1]; }
+  pLat /= pCells.length; pLng /= pCells.length;
+  const rawLat = pLat - lat, rawLng = pLng - lng;
+  const len = Math.sqrt(rawLat*rawLat + rawLng*rawLng) || 1;
+  const dLat = rawLat/len, dLng = rawLng/len;
+
+  const retreatCells = S.cells.filter(c => {
+    if (c.owner !== 'enemy') return false;
+    const cLat = c.c[0] - lat, cLng = c.c[1] - lng;
+    return (cLat * dLat + cLng * dLng) > 0;
+  });
+  if (!retreatCells.length) return;
+
+  const lineLayer = drawRetreateLineLayer(lat, lng, dLat, dLng, '#ff9d2b');
+  S.enemyRetreatOrder = { lat, lng, retreatCells, lineLayer, enemyDirLat: dLat, enemyDirLng: dLng };
+}
+
+function clearEnemyRetreatOrder(){
+  if (!S.enemyRetreatOrder) return;
+  if (S.enemyRetreatOrder.lineLayer && map.hasLayer(S.enemyRetreatOrder.lineLayer))
+    map.removeLayer(S.enemyRetreatOrder.lineLayer);
+  S.enemyRetreatOrder = null;
+}
+
+// Mirror of retreatTick for the AI side — same simultaneous wavefront logic.
+function enemyRetreatTick(){
+  const order = S.enemyRetreatOrder;
+  if (!order) return;
+  const ec = S.countries[S.eCode];
+  const pc = S.countries[S.pCode];
+
+  const stillOwned = order.retreatCells.filter(c => c.owner === 'enemy');
+  if (stillOwned.length === 0){
+    clearEnemyRetreatOrder();
+    return;
+  }
+
+  // Sort by forward projection (toward player) — most exposed first,
+  // all fronts recede simultaneously.
+  stillOwned.sort((a, b) => {
+    const aP = a.c[0]*order.enemyDirLat + a.c[1]*order.enemyDirLng;
+    const bP = b.c[0]*order.enemyDirLat + b.c[1]*order.enemyDirLng;
+    return bP - aP;
+  });
+
+  const cedeCount = Math.max(1, Math.ceil(stillOwned.length * 0.05));
+  const changed = [];
+  for (let i = 0; i < cedeCount; i++){
+    const c = stillOwned[i];
+    c.owner = 'player';
+    changed.push(c);
+    for (const nb of c.neighbors) changed.push(nb);
+    const eLoss = ec.max * 0.0000008 * (0.4 + Math.random() * 0.6);
+    const pLoss = pc.max * 0.000014  * (0.7 + Math.random() * 0.6);
+    ec.troops = Math.max(0, ec.troops - eLoss);
+    pc.troops = Math.max(0, pc.troops - pLoss);
+    S.cas.e += eLoss; S.cas.p += pLoss;
+  }
+  if (changed.length){ refreshCells(changed); recountCells(); checkWin(); }
+}
+// Player-triggered "STAND DOWN": cancel everything, refund all
+// committed troops to the country pool. This is the explicit way to
+// stop fighting and return to a pure defensive posture.
+function cancelOrder(){
+  clearAttackOrder(true);
+  clearMoveOrder();
+  clearRetreatOrder();
+  refreshOrderHUD();
+}
+
+function refreshOrderHUD(){
+  const o = $('olbl'), btn = $('cancelbtn');
+  if (S.attackOrder){
+    o.textContent = `▶ ATTACK ORDER · ${fmt(S.attackOrder.commit)} committed`;
+    o.style.color = '#ff8080';
+    btn.style.display = 'inline-block';
+  } else if (S.retreatOrder){
+    const remaining = S.retreatOrder.retreatCells.filter(c => c.owner === 'player').length;
+    const total     = S.retreatOrder.retreatCells.length;
+    const pct = total > 0 ? Math.round((1 - remaining/total)*100) : 100;
+    o.textContent = `⇄ RETREATING · ${pct}% withdrawn`;
+    o.style.color = '#5e8eff';
+    btn.style.display = 'inline-block';
+  } else if (S.moveOrder){
+    o.textContent = `⇄ MOVE ORDER · ${fmt(S.moveOrder.commit)} mustering`;
+    o.style.color = '#5e8eff';
+    btn.style.display = 'inline-block';
+  } else {
+    o.textContent = 'NO ACTIVE ORDER · HOLDING POSITIONS';
+    o.style.color = '#ffea4a';
+    btn.style.display = 'none';
+  }
+  const ealert = $('ealert');
+  if (ealert) ealert.style.display = S.enemyAttackOrder ? 'block' : 'none';
+}
+
+// Nearest cell of any owner to a point (used to classify the click).
+function nearestAnyCell(latlng){
+  let best = null, bd = Infinity;
+  for (const cell of S.cells){
+    const dx = cell.c[0] - latlng[0], dy = cell.c[1] - latlng[1];
+    const d  = dx*dx + dy*dy;
+    if (d < bd){ bd = d; best = cell; }
+  }
+  // Reject clicks that are clearly outside the cell grid (e.g. far at sea).
+  // A typical cell side is around ~0.4°; if the closest cell centre is
+  // more than ~3° away, treat the click as "off-map".
+  if (best && bd > 9) return null;
+  return best;
+}
+
+// ── AUTONOMOUS ENEMY AI ATTACK ────────────────────────────────────
+// Separately from anything the player does, the enemy AI periodically
+// rolls the dice to decide whether to launch its own offensive. This
+// is the ONLY way the enemy initiates an attack — it is never tied to
+// player action. While it's active, the player's troops near the
+// contested frontier automatically defend (see runPlayerAutoDefense),
+// but the player must still explicitly order any offensive of their
+// own — automatic defense never invades enemy soil.
+function maybeStartAIAttack(){
+  if (S.over || S.enemyAttackOrder) return;
+  const now = S.simMs;
+  if (now < (S.aiNextRollAt || 0)) return;
+  S.aiNextRollAt = now + C.AI_ATTACK_CHECK_MS;
+
+  const ec = S.countries[S.eCode], pc = S.countries[S.pCode];
+  if (!ec || !pc || ec.troops < ec.max * C.AI_ATTACK_MIN_TROOPS_FRAC) return;
+
+  const fronts = frontierCellsOf('enemy');
+  if (!fronts.length) return;
+
+  const chance = clamp(C.AI_ATTACK_CHANCE, 0, 0.9);
+  if (Math.random() > chance) return;
+
+  const focusCell = fronts[Math.floor(Math.random() * fronts.length)];
+  const pct = C.AI_ATTACK_MIN_COMMIT_PCT +
+              Math.random() * (C.AI_ATTACK_MAX_COMMIT_PCT - C.AI_ATTACK_MIN_COMMIT_PCT);
+  const commit = Math.max(500, Math.floor(ec.troops * pct));
+  ec.troops -= commit;
+
+  const icon = L.divIcon({
+    className:'', iconAnchor:[0,0],
+    html:`<div class="enemyfocusring"></div>`
+  });
+  const marker = L.marker([focusCell.c[0], focusCell.c[1]],
+                          { icon, zIndexOffset: 950, interactive:false }).addTo(map);
+
+  const duration = C.AI_ATTACK_MIN_DURATION_MS +
+                    Math.random() * (C.AI_ATTACK_MAX_DURATION_MS - C.AI_ATTACK_MIN_DURATION_MS);
+  S.enemyAttackOrder = {
+    lat: focusCell.c[0], lng: focusCell.c[1],
+    commit, marker,
+    until: now + duration,
+  };
+}
+
+// ── COMBAT TICK ───────────────────────────────────────────────────
+// Combat only happens along two independent channels:
+//   • S.attackOrder       → the PLAYER explicitly ordered an offensive.
+//                            The player pushes at the focus, and the
+//                            enemy automatically defends/counters.
+//   • S.enemyAttackOrder  → the ENEMY AI decided to attack on its own.
+//                            The enemy pushes at its focus, and the
+//                            player automatically defends nearby —
+//                            but never automatically invades enemy land.
+// With neither order active, the frontline sits still.
+function combatTick(){
+  if (S.over) return;
+  const pc = S.countries[S.pCode], ec = S.countries[S.eCode];
+
+  // Expire the move order naturally after some time; mustered troops
+  // return to the country pool.
+  if (S.moveOrder && Date.now() > S.moveOrder.expires){
+    clearMoveOrder();
+  }
+
+  // If the player's attack order is drained, end it.
+  if (S.attackOrder && S.attackOrder.commit <= 0){
+    clearAttackOrder(false);
+  }
+
+  // If the AI's own attack has run its course or drained its troops,
+  // end it and refund whatever it didn't spend.
+  if (S.enemyAttackOrder && (S.enemyAttackOrder.commit <= 0 || S.simMs > S.enemyAttackOrder.until)){
+    clearEnemyAttackOrder(true);
+  }
+
+  // ── FIX 4: run retreat ticks (both sides) BEFORE normal combat ──
+  retreatTick();
+  enemyRetreatTick();
+  // The enemy AI may occasionally decide to retreat when badly outnumbered.
+  maybeStartAIRetreat();
+
+  // The enemy AI gets a chance to start a fresh offensive on its own,
+  // completely independent of anything the player is doing.
+  maybeStartAIAttack();
+
+  const changed = [];
+
+  // ── Player-ordered offensive + automatic enemy defense ─────────
+  if (S.attackOrder && S.attackOrder.commit > 0 && ec.troops > 0){
+    const pFronts = frontierCellsOf('player');
+    if (pFronts.length){
+      runPlayerPush({ attackerCountry: pc, defenderCountry: ec, frontiers: pFronts, changed });
+    }
+  }
+  if (S.attackOrder && ec.troops > 0){
+    const eFronts = frontierCellsOf('enemy');
+    if (eFronts.length){
+      runEnemyCounter({ attackerCountry: ec, defenderCountry: pc, frontiers: eFronts, changed });
+    }
+  }
+
+  // ── AI-ordered offensive + automatic player defense ────────────
+  if (S.enemyAttackOrder && S.enemyAttackOrder.commit > 0 && pc.troops > 0){
+    const eFronts2 = frontierCellsOf('enemy');
+    if (eFronts2.length){
+      runEnemyPush({ attackerCountry: ec, defenderCountry: pc, frontiers: eFronts2, changed });
+    }
+  }
+  if (S.enemyAttackOrder && pc.troops > 0){
+    const pFronts2 = frontierCellsOf('player');
+    if (pFronts2.length){
+      runPlayerAutoDefense({ ec, pc, frontiers: pFronts2, changed });
+    }
+  }
+
+  if (changed.length){
+    refreshCells(changed);
+    recountCells();
+    checkWin();
+  }
+
+  renderFlagsAndLabels();
+  refreshOrderHUD();
+}
+
+// ── TROOP-RATIO COMBAT WEIGHTING ──────────────────────────────────
+// Shared by every combat function below. `ratio` is the attacking
+// side's share of the two armies' combined strength (0..1). The curve
+// is deliberately steep: a big numerical advantage should let you
+// dominate and "almost destroy" an outnumbered foe, while a heavily
+// outnumbered attacker should mostly fail and occasionally land a
+// small, temporary gain — never grind forward at a steady pace.
+function combatRatioWeight(ratio){
+  const r = clamp(ratio, 0, 1);
+  return C.COMBAT_RATIO_MIN +
+         (C.COMBAT_RATIO_MAX - C.COMBAT_RATIO_MIN) * Math.pow(r, C.COMBAT_RATIO_POW);
+}
+// A weak attacker doesn't just get worse odds per cell — it also gets
+// fewer attempts per tick, so its progress feels rare/occasional
+// rather than a slow-but-steady grind. A dominant attacker (weight at
+// or above 1) keeps its full budget.
+function combatBudgetScale(weight){
+  return clamp(weight, C.COMBAT_BUDGET_FLOOR, 1);
+}
+
+// ── PLAYER PUSH ───────────────────────────────────────────────────
+// Player attack order: convert frontier cells nearest the focus into
+// pressure, spend commit pool to flip enemy cells. The closer a
+// frontier cell is to the focus, the more aggressive it is.
+function runPlayerPush({ attackerCountry, defenderCountry, frontiers, changed }){
+  const order = S.attackOrder;
+  if (!order) return;
+
+  const focus = [order.lat, order.lng];
+
+  // ── FIX 2: Hold position once the attack target has been reached.
+  // If the cell nearest to the focus point is now player-owned, the
+  // front has advanced to (or past) the ordered position — stop pushing
+  // and let troops hold the new line. The commit pool stays reserved
+  // so the enemy counter still has opposition to press against.
+  const nearFocus = nearestAnyCell(focus);
+  if (!nearFocus || nearFocus.owner !== 'enemy') return;
+
+  // Defender garrison bonus from a MOVE order:
+  //   troops the player has mustered defensively make cells near the
+  //   muster point harder for the enemy to flip back (handled in
+  //   runEnemyCounter), but they don't help offence.
+  // Include the commit pool in effective attacker strength — committed
+  // troops ARE fighting, tracked separately from the standing pool.
+  // Without this fix a 50 % commit halved the apparent army size and
+  // badly deflated the troop-ratio advantage.
+  const effectiveAttacker = attackerCountry.troops + (order.commit || 0);
+  const ratio = effectiveAttacker /
+                (effectiveAttacker + defenderCountry.troops + 1);
+  const ratioWeight = combatRatioWeight(ratio);
+
+  // ── FIX 4: Make the slider genuinely control attack power.
+  // intensityFrac is 0.01–0.99 (slider / 100).  We map it to a scale
+  // of 10 %–100 % so even a 1 % commitment still pushes a little, but
+  // 99 % is noticeably stronger than 50 % or 10 %.
+  const intensityFrac  = clamp(order.intensityFrac ?? 0.5, 0.01, 1);
+  const intensityScale = 0.10 + 0.90 * intensityFrac; // [0.1, 1.0]
+
+  const candidates = [];
+  for (const fc of frontiers){
+    const dx = fc.c[0] - focus[0], dy = fc.c[1] - focus[1];
+    const d  = Math.sqrt(dx*dx + dy*dy);
+    const dWeight = 1.0 + C.FOCUS_BOOST * Math.exp(-d / C.FOCUS_DECAY);
+
+    // Frontier cells very far from the focus barely push at all —
+    // your order really does concentrate the attack where you clicked.
+    if (dWeight < 1.15) continue;
+
+    // Per-cell flip probability scales with slider commitment. (Game
+    // speed is no longer multiplied in here — combatTick itself now
+    // fires proportionally more often at higher speed, see startLoops().)
+    const cellPressure = C.BASE_FLIP * ratioWeight * dWeight * intensityScale;
+    for (const nb of fc.neighbors){
+      if (nb.owner === 'enemy'){
+        candidates.push({ from: fc, to: nb, p: cellPressure });
+      }
+    }
+  }
+  if (!candidates.length) return;
+
+  // Cap by commit pool. maxFlipsByCells also scales with intensityScale so
+  // even if the pool is huge, a low-commitment order can't spam flips.
+  const troopsPerFlipBudget = Math.max(50, Math.floor(attackerCountry.max * C.TROOPS_PER_FLIP_FRAC));
+  const maxFlipsByPool   = Math.floor(order.commit / troopsPerFlipBudget);
+  const maxFlipsByCells  = Math.max(2, Math.ceil(frontiers.length * 0.45 * intensityScale));
+  let budget = Math.min(maxFlipsByPool, maxFlipsByCells, candidates.length);
+  budget = Math.max(1, Math.round(budget * combatBudgetScale(ratioWeight)));
+  if (budget <= 0) return;
+
+  // Sort by pressure descending so the click area resolves first.
+  candidates.sort((a, b) => b.p - a.p);
+
+  for (const cand of candidates){
+    if (budget <= 0) break;
+    if (Math.random() >= Math.min(0.95, cand.p)) continue;
+
+    const cell = cand.to;
+    cell.owner = 'player';
+
+    // Losses proportional to each side's max army — same relative rate
+    // regardless of whether it's a 500K or 20M-troop matchup.
+    const troopsPerFlip = Math.max(50, Math.floor(attackerCountry.max * C.TROOPS_PER_FLIP_FRAC));
+    const atkSpend = troopsPerFlip;
+    const atkLoss  = attackerCountry.max * C.ATTACKER_LOSS_FRAC * (0.6 + Math.random()*0.8);
+    const defLoss  = defenderCountry.max * C.DEFENDER_LOSS_FRAC * (0.6 + Math.random()*0.8);
+
+    order.commit = Math.max(0, order.commit - atkSpend);
+    attackerCountry.troops = Math.max(0, attackerCountry.troops - atkLoss);
+    defenderCountry.troops = Math.max(0, defenderCountry.troops - defLoss);
+    S.cas.p += atkLoss; S.cas.e += defLoss;
+    for (const nb of cell.neighbors) changed.push(nb);
+    budget--;
+    if (order.commit <= 0) break;
+  }
+}
+
+// ── ENEMY COUNTER ─────────────────────────────────────────────────
+// While the player is attacking, the enemy fights back along its
+// own frontier — but it doesn't push deep, it just tries to claw
+// back recently-lost ground or hold the line.
+// Cells near the player's muster point (move order) get a strong
+// defensive bonus: the enemy is much less likely to flip them.
+function runEnemyCounter({ attackerCountry, defenderCountry, frontiers, changed }){
+  // Count the player's full effective force (troops + commit pool) so a
+  // massively outnumbered enemy can't casually counter-attack.
+  const effectiveDefender = defenderCountry.troops +
+                            (S.attackOrder ? (S.attackOrder.commit || 0) : 0);
+  const ratio = attackerCountry.troops /
+                (attackerCountry.troops + effectiveDefender + 1);
+  // Automatic counters are slightly less efficient than a deliberate
+  // order, but the troop ratio itself now does almost all of the
+  // work — a badly outnumbered defender should barely be able to
+  // hold the line, not casually claw back everything you take.
+  const ratioWeight = combatRatioWeight(ratio) * 0.8;
+
+  // The contested frontier is biased around the player's attack focus.
+  const focus = S.attackOrder ? [S.attackOrder.lat, S.attackOrder.lng] : null;
+
+  const muster = S.moveOrder ? [S.moveOrder.lat, S.moveOrder.lng] : null;
+
+  const candidates = [];
+  for (const fc of frontiers){
+    let dWeight = 0.6;
+    if (focus){
+      const dx = fc.c[0] - focus[0], dy = fc.c[1] - focus[1];
+      const d  = Math.sqrt(dx*dx + dy*dy);
+      dWeight  = 0.6 + 2.2 * Math.exp(-d / (C.FOCUS_DECAY * 1.4));
+    }
+    const cellPressure = C.BASE_FLIP * ratioWeight * dWeight;
+
+    for (const nb of fc.neighbors){
+      if (nb.owner !== 'player') continue;
+
+      // Player's MOVE order garrisons nearby cells: cells close to
+      // the muster point are much harder for the enemy to take.
+      let defBonus = 1.0;
+      if (muster){
+        const mx = nb.c[0] - muster[0], my = nb.c[1] - muster[1];
+        const md = Math.sqrt(mx*mx + my*my);
+        // Up to ~5× harder to flip right at the muster point.
+        defBonus = 1.0 + 4.0 * Math.exp(-md / (C.FOCUS_DECAY * 0.9))
+                       * (S.moveOrder.commit / Math.max(1, defenderCountry.troops + S.moveOrder.commit));
+      }
+      candidates.push({ from: fc, to: nb, p: cellPressure / defBonus });
+    }
+  }
+  if (!candidates.length) return;
+
+  // Enemy counter is constrained: at most a handful of flips per tick
+  // — fewer still when the enemy is badly outnumbered.
+  let budget = Math.max(1, Math.ceil(frontiers.length * 0.20));
+  budget = Math.min(budget, candidates.length);
+  budget = Math.max(1, Math.round(budget * combatBudgetScale(ratioWeight)));
+
+  candidates.sort((a, b) => b.p - a.p);
+
+  for (const cand of candidates){
+    if (budget <= 0) break;
+    if (Math.random() >= Math.min(0.85, cand.p)) continue;
+
+    const cell = cand.to;
+    cell.owner = 'enemy';
+
+    const atkLoss = attackerCountry.max * C.COUNTER_LOSS_FRAC   * (0.5 + Math.random()*0.9);
+    const defLoss = defenderCountry.max * C.ATTACKER_LOSS_FRAC  * (0.5 + Math.random()*0.9);
+
+    attackerCountry.troops = Math.max(0, attackerCountry.troops - atkLoss);
+    defenderCountry.troops = Math.max(0, defenderCountry.troops - defLoss);
+    S.cas.e += atkLoss; S.cas.p += defLoss;
+
+    // Mustered troops absorb some of the loss when the cell taken
+    // was being defended by them.
+    if (S.moveOrder){
+      const mx = cell.c[0] - S.moveOrder.lat, my = cell.c[1] - S.moveOrder.lng;
+      const md = Math.sqrt(mx*mx + my*my);
+      if (md < C.FOCUS_DECAY * 1.2){
+        const tpf = Math.max(50, Math.floor(defenderCountry.max * C.TROOPS_PER_FLIP_FRAC));
+        S.moveOrder.commit = Math.max(0, S.moveOrder.commit - tpf * 0.8);
+      }
+    }
+
+    changed.push(cell, cand.from);
+    for (const nb of cell.neighbors) changed.push(nb);
+    budget--;
+  }
+}
+
+// ── ENEMY AI PUSH ─────────────────────────────────────────────────
+// The enemy decided to attack on its own. This mirrors runPlayerPush:
+// it's a real offensive and may take any frontier cell, including the
+// player's native land — this is the one case where the enemy is
+// allowed to invade, because the AI explicitly chose to attack.
+function runEnemyPush({ attackerCountry, defenderCountry, frontiers, changed }){
+  const order = S.enemyAttackOrder;
+  if (!order) return;
+
+  const focus = [order.lat, order.lng];
+  // Include enemy commit pool so the AI's committed force counts correctly.
+  const effectiveEnemyAttacker = attackerCountry.troops + (order.commit || 0);
+  const ratio = effectiveEnemyAttacker /
+                (effectiveEnemyAttacker + defenderCountry.troops + 1);
+  const ratioWeight = combatRatioWeight(ratio);
+
+  const candidates = [];
+  for (const fc of frontiers){
+    const dx = fc.c[0] - focus[0], dy = fc.c[1] - focus[1];
+    const d  = Math.sqrt(dx*dx + dy*dy);
+    const dWeight = 1.0 + C.FOCUS_BOOST * Math.exp(-d / C.FOCUS_DECAY);
+    if (dWeight < 1.15) continue;
+
+    const cellPressure = C.BASE_FLIP * ratioWeight * dWeight;
+    for (const nb of fc.neighbors){
+      if (nb.owner === 'player') candidates.push({ from: fc, to: nb, p: cellPressure });
+    }
+  }
+  if (!candidates.length) return;
+
+  const troopsPerFlipE = Math.max(50, Math.floor(attackerCountry.max * C.TROOPS_PER_FLIP_FRAC));
+  const maxFlipsByPool  = Math.floor(order.commit / troopsPerFlipE);
+  const maxFlipsByCells = Math.max(2, Math.ceil(frontiers.length * 0.45));
+  let budget = Math.min(maxFlipsByPool, maxFlipsByCells, candidates.length);
+  budget = Math.max(1, Math.round(budget * combatBudgetScale(ratioWeight)));
+  if (budget <= 0) return;
+
+  candidates.sort((a, b) => b.p - a.p);
+
+  for (const cand of candidates){
+    if (budget <= 0) break;
+    if (Math.random() >= Math.min(0.95, cand.p)) continue;
+
+    const cell = cand.to;
+    cell.owner = 'enemy';
+
+    const atkLoss = attackerCountry.max * C.ATTACKER_LOSS_FRAC * (0.6 + Math.random()*0.8);
+    const defLoss = defenderCountry.max * C.DEFENDER_LOSS_FRAC * (0.6 + Math.random()*0.8);
+
+    order.commit = Math.max(0, order.commit - troopsPerFlipE);
+    attackerCountry.troops = Math.max(0, attackerCountry.troops - atkLoss);
+    defenderCountry.troops = Math.max(0, defenderCountry.troops - defLoss);
+    S.cas.e += atkLoss; S.cas.p += defLoss;
+
+    changed.push(cell, cand.from);
+    for (const nb of cell.neighbors) changed.push(nb);
+    budget--;
+    if (order.commit <= 0) break;
+  }
+}
+
+// ── PLAYER AUTOMATIC DEFENSE ───────────────────────────────────────
+// While the enemy AI is attacking, the player's troops near the
+// contested frontier automatically fight back — but ONLY to reclaim
+// cells that originally belonged to the player. They never push into
+// the enemy's own native territory on their own; that requires an
+// explicit attack order from the player.
+function runPlayerAutoDefense({ ec, pc, frontiers, changed }){
+  const ratio = pc.troops / (pc.troops + ec.troops + 1);
+  // Automatic defense is slightly less efficient than a deliberate
+  // order, but the troop ratio itself now does almost all of the work.
+  const ratioWeight = combatRatioWeight(ratio) * 0.8;
+
+  const focus = S.enemyAttackOrder ? [S.enemyAttackOrder.lat, S.enemyAttackOrder.lng] : null;
+
+  const candidates = [];
+  for (const fc of frontiers){
+    let dWeight = 0.6;
+    if (focus){
+      const dx = fc.c[0] - focus[0], dy = fc.c[1] - focus[1];
+      const d  = Math.sqrt(dx*dx + dy*dy);
+      dWeight  = 0.6 + 2.2 * Math.exp(-d / (C.FOCUS_DECAY * 1.4));
+    }
+    const cellPressure = C.BASE_FLIP * ratioWeight * dWeight;
+
+    for (const nb of fc.neighbors){
+      if (nb.owner !== 'enemy') continue;
+      if (nb.origCountry !== S.pCode) continue; // never auto-invade enemy native soil
+      candidates.push({ from: fc, to: nb, p: cellPressure });
+    }
+  }
+  if (!candidates.length) return;
+
+  let budget = Math.max(1, Math.ceil(frontiers.length * 0.20));
+  budget = Math.min(budget, candidates.length);
+  budget = Math.max(1, Math.round(budget * combatBudgetScale(ratioWeight)));
+
+  candidates.sort((a, b) => b.p - a.p);
+
+  for (const cand of candidates){
+    if (budget <= 0) break;
+    if (Math.random() >= Math.min(0.85, cand.p)) continue;
+
+    const cell = cand.to;
+    cell.owner = 'player';
+
+    const atkLoss = pc.max * C.COUNTER_LOSS_FRAC  * (0.5 + Math.random()*0.9);
+    const defLoss = ec.max * C.ATTACKER_LOSS_FRAC * (0.5 + Math.random()*0.9);
+
+    pc.troops = Math.max(0, pc.troops - atkLoss);
+    ec.troops = Math.max(0, ec.troops - defLoss);
+    S.cas.p += atkLoss; S.cas.e += defLoss;
+
+    if (S.enemyAttackOrder){
+      const dx = cell.c[0] - S.enemyAttackOrder.lat, dy = cell.c[1] - S.enemyAttackOrder.lng;
+      if (Math.sqrt(dx*dx + dy*dy) < C.FOCUS_DECAY * 1.2){
+        const tpfE = Math.max(50, Math.floor(ec.max * C.TROOPS_PER_FLIP_FRAC));
+        S.enemyAttackOrder.commit = Math.max(0, S.enemyAttackOrder.commit - tpfE * 0.8);
+      }
+    }
+
+    changed.push(cell, cand.from);
+    for (const nb of cell.neighbors) changed.push(nb);
+    budget--;
+  }
+}
+
+// ── REGEN TICK ────────────────────────────────────────────────────
+// Regen scales with how much of your original territory you still
+// hold — but rather than snapping to that ratio instantly, it eases
+// toward it. The longer a country stays partially occupied, the
+// closer (and slower) its regen settles toward the held-territory
+// rate; the longer it holds full territory, the more that recovers.
+function regenTick(){
+  if (S.over) return;
+  for (const c of Object.values(S.countries)){
+    if (c.ctrl === 'neutral') continue;
+    const held = c.cellsOrigTotal ? (c.cellsHeld / c.cellsOrigTotal) : 1;
+    if (c.regenMult === undefined) c.regenMult = 1;
+    c.regenMult = lerp(c.regenMult, held, C.REGEN_MULT_SMOOTH);
+    const gain = Math.floor(c.max * C.REGEN_RATE * c.regenMult);
+    c.troops   = Math.min(c.troops + gain, c.max);
+  }
+  const pc = S.countries[S.pCode];
+  if (pc) $('rlbl').textContent = `REGEN: +${fmt(Math.floor(pc.max * C.REGEN_RATE * pc.regenMult))}/s`;
+}
+
+// ── FLAGS + LABELS ────────────────────────────────────────────────
+// Flag/label positions are still recomputed every combat tick from the
+// live frontier — that part of the system is unchanged and keeps
+// following combat exactly as before. What's new is that flags persist
+// across ticks (fade in/out + resize smoothly) instead of being fully
+// destroyed and recreated, and that density now scales with army size.
+function renderFlagsAndLabels(){
+  syncFlags('player');
+  syncFlags('enemy');
+  drawTroopLabel('player');
+  drawTroopLabel('enemy');
+  renderFrontLine();
+}
+
+// ── SMOOTH FRONT LINE ─────────────────────────────────────────────
+// A single soft polyline traced along edges shared between player and
+// enemy cells. With dense cells this naturally looks curved instead
+// of blocky.
+function renderFrontLine(){
+  if (S.frontLineLayer){
+    if (map.hasLayer(S.frontLineLayer)) map.removeLayer(S.frontLineLayer);
+    S.frontLineLayer = null;
+  }
+  if (!S.cells.length) return;
+
+  const segments = [];
+  for (const cell of S.cells){
+    if (cell.owner !== 'player') continue;
+    for (const nb of cell.neighbors){
+      if (nb.owner !== 'enemy') continue;
+      const lat1 = cell.c[0], lng1 = cell.c[1];
+      const lat2 = nb.c[0],   lng2 = nb.c[1];
+      const mLat = (lat1 + lat2) / 2;
+      const mLng = (lng1 + lng2) / 2;
+      const dLat = Math.abs(lat2 - lat1);
+      const dLng = Math.abs(lng2 - lng1);
+      let aLat, aLng, bLat, bLng;
+      if (dLng > dLat){
+        const half = dLng / 2;
+        aLat = mLat - half; aLng = mLng;
+        bLat = mLat + half; bLng = mLng;
+      } else {
+        const half = dLat / 2;
+        aLat = mLat; aLng = mLng - half;
+        bLat = mLat; bLng = mLng + half;
+      }
+      segments.push([[aLat, aLng], [bLat, bLng]]);
+    }
+  }
+  if (!segments.length) return;
+
+  S.frontLineLayer = L.polyline(segments, {
+    color: C.COL_FRONT,
+    weight: 2.2,
+    opacity: 0.85,
+    lineCap: 'round',
+    lineJoin: 'round',
+    smoothFactor: 2.5,
+    interactive: false,
+  }).addTo(map);
+}
+
+// ── FLAG DENSITY ──────────────────────────────────────────────────
+// How many soldiers a single flag represents, by army size.
+function flagsPerFlagDivisor(troops){
+  if (troops >= C.FLAG_TIER2_MAX) return C.FLAG_DIV_HIGH;
+  if (troops >= C.FLAG_TIER1_MAX) return C.FLAG_DIV_MID;
+  return C.FLAG_DIV_LOW;
+}
+// Troops under your command right now, including anything committed
+// to an active order (so flags don't vanish just because part of the
+// force is earmarked for an attack/move/AI order).
+function effectiveTroops(side){
+  const code  = side === 'player' ? S.pCode : S.eCode;
+  const ctry  = S.countries[code];
+  if (!ctry) return 0;
+  let t = ctry.troops;
+  if (side === 'player'){
+    if (S.attackOrder) t += S.attackOrder.commit;
+    if (S.moveOrder)   t += S.moveOrder.commit;
+  } else {
+    if (S.enemyAttackOrder) t += S.enemyAttackOrder.commit;
+  }
+  return t;
+}
+
+// Pick `count` cells evenly spread across a list — by STABLE SPATIAL
+// POSITION along whichever axis the cells vary most on, not by array
+// index after sorting. This matters a lot: the input list (frontier or
+// interior cells) changes a little every combat tick as cells flip.
+// Index-based "sort then step by N" sampling is very sensitive to
+// that — a couple of cells flipping can shift the sorted list's length
+// or order enough that EVERY sampled index lands on a totally
+// different cell, which is exactly what made flags appear to randomly
+// jump across the map with no input. Binning by absolute position
+// keeps each sample local to a small region, so only the bins actually
+// near a change move at all.
+function sampleEvenlyCells(cells, count){
+  if (count <= 0 || !cells.length) return [];
+  if (count >= cells.length) return cells.slice();
+
+  let minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity;
+  for (const c of cells){
+    if (c.c[0] < minLat) minLat = c.c[0]; if (c.c[0] > maxLat) maxLat = c.c[0];
+    if (c.c[1] < minLng) minLng = c.c[1]; if (c.c[1] > maxLng) maxLng = c.c[1];
+  }
+  const latSpan = maxLat - minLat, lngSpan = maxLng - minLng;
+  const useLat = latSpan >= lngSpan; // sample along whichever axis the front actually runs along
+  const lo = useLat ? minLat : minLng;
+  const span = (useLat ? latSpan : lngSpan) || 1;
+
+  const out = [];
+  const used = new Set();
+  for (let i = 0; i < count; i++){
+    const frac = count === 1 ? 0.5 : i / (count - 1);
+    const target = lo + frac * span;
+    let best = null, bestD = Infinity;
+    for (const c of cells){
+      if (used.has(c)) continue;
+      const v = useLat ? c.c[0] : c.c[1];
+      const d = Math.abs(v - target);
+      if (d < bestD){ bestD = d; best = c; }
+    }
+    if (best){ out.push(best); used.add(best); }
+  }
+  return out;
+}
+
+// Nudge a border-flag point back from the immediate front line, toward
+// its own side, so friendly and enemy flags don't sit on top of each
+// other right at the border.  The inset is capped at 0.38 × cellSide
+// (well below the 0.5 × cellSide half-width) so the flag can never
+// escape the owning cell — previously 0.7 × cellSide could overshoot.
+function insetFromBorder(cell, side){
+  const enemySide = side === 'player' ? 'enemy' : 'player';
+  let dLat = 0, dLng = 0, cnt = 0;
+  for (const nb of cell.neighbors){
+    if (nb.owner === enemySide){
+      dLat += nb.c[0] - cell.c[0];
+      dLng += nb.c[1] - cell.c[1];
+      cnt++;
+    }
+  }
+  if (!cnt) return cell.c.slice();
+  dLat /= cnt; dLng /= cnt;
+  const len = Math.sqrt(dLat*dLat + dLng*dLng) || 1;
+  const inset = (S.cellSide || 0.3) * 0.38; // was 0.7 — reduced to stay inside cell
+  return [cell.c[0] - (dLat/len)*inset, cell.c[1] - (dLng/len)*inset];
+}
+
+// Spread `count` points in a small ring around a center — used to show
+// troops actually gathering at a muster point instead of all stacking
+// on the exact same pixel.
+function clusterPointsAround(center, count, radius){
+  const pts = [];
+  if (count <= 0) return pts;
+  if (count === 1){ pts.push(center.slice()); return pts; }
+  for (let i = 0; i < count; i++){
+    const a = (i / count) * Math.PI * 2;
+    pts.push([center[0] + Math.sin(a) * radius, center[1] + Math.cos(a) * radius]);
+  }
+  return pts;
+}
+
+// Compute the full set of {lat,lng,scale,angle} flag targets for one
+// side: most near the contested frontier (angled to face the enemy), a
+// small scattering across the rest of the territory, sized by how many
+// troops each flag stands in for. This is recomputed fresh every tick
+// — only syncFlags() (below) decides what to do with the result so
+// existing markers fade/resize/glide instead of popping or teleporting.
+function computeFlagTargets(side){
+  const total = effectiveTroops(side);
+  if (total <= 0) return [];
+  const perFlag = flagsPerFlagDivisor(total);
+  const desired = clamp(Math.round(total / perFlag), 1, 400);
+
+  const owned = S.cells.filter(c => c.owner === side);
+  if (!owned.length) return [];
+
+  const fronts = frontierCellsOf(side);
+  const frontSet = new Set(fronts);
+  const interiorCells = owned.filter(c => !frontSet.has(c));
+
+  // If you've issued a MOVE order, a share of your flags proportional
+  // to how much of your force is mustering there should actually leave
+  // the border and gather at the muster point — not just one flag.
+  let musterCount = 0, musterCenter = null;
+  if (side === 'player' && S.moveOrder && total > 0){
+    const frac = clamp(S.moveOrder.commit / total, 0, 1);
+    musterCount = Math.min(desired, Math.round(desired * frac));
+    if (musterCount > 0) musterCenter = [S.moveOrder.lat, S.moveOrder.lng];
+  }
+  const remaining = desired - musterCount;
+
+  let borderCount, interiorCount;
+  if (!fronts.length){
+    borderCount = 0; interiorCount = remaining;
+  } else if (!interiorCells.length){
+    borderCount = remaining; interiorCount = 0;
+  } else {
+    interiorCount = remaining <= 2 ? 0 : Math.max(1, Math.round(remaining * C.FLAG_INTERIOR_RATIO));
+    borderCount = remaining - interiorCount;
+  }
+
+  const borderCells = sampleEvenlyCells(fronts, borderCount);
+  // If the frontier itself is too narrow to physically fit every desired
+  // border flag, don't just drop the shortfall — let it spill over into
+  // extra interior flags so the total still matches the density formula.
+  const shortfall = Math.max(0, borderCount - borderCells.length);
+  const interiorPicks = sampleEvenlyCells(interiorCells, Math.min(interiorCount + shortfall, interiorCells.length));
+
+  const pts = [];
+  for (const c of borderCells) pts.push(insetFromBorder(c, side));
+  for (const c of interiorPicks) pts.push(c.c.slice());
+
+  if (musterCount > 0 && musterCenter){
+    const radius = (S.cellSide || 0.3) * 0.9;
+    for (const p of clusterPointsAround(musterCenter, musterCount, radius)) pts.push(p);
+  }
+
+  const troopsPerFlag = total / desired;
+  const sizeScale = clamp(troopsPerFlag / perFlag, 0.7, 1.4);
+
+  return pts.map(p => ({ lat: p[0], lng: p[1], scale: sizeScale }));
+}
+
+// ── PERSISTENT FLAG POOL ──────────────────────────────────────────
+// Flags are reused across ticks instead of destroyed/recreated, so we
+// can fade new ones in, fade surplus ones out, and resize existing
+// ones smoothly, and glide them between cell positions instead of
+// snapping — all via CSS transitions, without touching how target
+// positions themselves are computed (still the original
+// frontier-sampling approach above, which already follows combat
+// correctly). Flags always face straight — no rotation.
+function flagPxSize(scale){
+  const w = Math.round(clamp(C.FLAG_BASE_W * scale, C.FLAG_MIN_PX, C.FLAG_MAX_PX));
+  const h = Math.round(w * C.FLAG_BASE_H / C.FLAG_BASE_W);
+  return [w, h];
+}
+function makeFlagMarker(side, lat, lng, scale){
+  const code = side === 'player' ? S.pCode : S.eCode;
+  const ctry = S.countries[code];
+  const [w, h] = flagPxSize(scale);
+  const icon = L.divIcon({
+    className: 'flagWrap', iconAnchor: [Math.round(w/2), Math.round(h/2)],
+    html: `<img class="fico" style="width:${w}px;height:${h}px;opacity:0" src="${ctry.flagUrl}" alt="">`
+  });
+  const marker = L.marker([lat, lng], { icon, zIndexOffset: 700, interactive: false }).addTo(map);
+  // Set initial opacity 0 synchronously above, then bump to full
+  // opacity next frame so the browser actually animates the fade-in
+  // instead of just appearing at full strength.
+  requestAnimationFrame(() => {
+    const img = marker.getElement()?.querySelector('img');
+    if (img) img.style.opacity = '1';
+  });
+  return marker;
+}
+// Reposition/resize an EXISTING flag entry. Position changes only get
+// the smooth-glide treatment when the target actually moved (a
+// different cell/spot) — if nothing changed we skip touching the
+// transition class entirely, so idle flags never interfere with map
+// panning/zooming.
+function setFlagVisual(entry, lat, lng, scale){
+  const marker = entry.marker;
+  const el = marker.getElement();
+  const moved = entry.lat === undefined ||
+                Math.abs(entry.lat - lat) > 1e-7 || Math.abs(entry.lng - lng) > 1e-7;
+
+  if (moved && el){
+    el.classList.add('flagMoving');
+    clearTimeout(entry._moveTimer);
+    entry._moveTimer = setTimeout(() => { el.classList.remove('flagMoving'); }, 460);
+  }
+  marker.setLatLng([lat, lng]);
+  entry.lat = lat; entry.lng = lng;
+
+  const img = el?.querySelector('img');
+  if (img){
+    const [w, h] = flagPxSize(scale);
+    img.style.width  = w + 'px';
+    img.style.height = h + 'px';
+  }
+}
+function fadeOutFlag(entry){
+  entry.dead = true;
+  clearTimeout(entry._moveTimer);
+  const img = entry.marker.getElement()?.querySelector('img');
+  if (img) img.style.opacity = '0';
+  setTimeout(() => {
+    if (map.hasLayer(entry.marker)) map.removeLayer(entry.marker);
+  }, C.FLAG_FADE_MS + 60);
+}
+// Reconciles the live flag pool with this tick's target positions.
+//
+// IMPORTANT: targets are matched to existing flags by NEAREST
+// DISTANCE, not by array index. The target list gets resampled fresh
+// every tick and its internal ordering can shuffle (border vs interior
+// counts changing, a muster cluster appearing/growing, etc.) — naive
+// index-based matching would occasionally hand an existing flag a
+// target on the opposite side of the map, which is exactly what made
+// flags/troops appear to randomly teleport. Nearest-match means each
+// flag always glides to whichever target is actually closest to it.
+function syncFlags(side){
+  const pool = S.flagPools[side];
+  const targets = computeFlagTargets(side);
+  const alive = pool.filter(e => !e.dead);
+
+  const nE = alive.length, nT = targets.length;
+  const matched = new Set();
+  const usedTarget = new Array(nT).fill(false);
+
+  if (nE && nT){
+    // Precompute every (flag, target) squared distance once, then
+    // repeatedly lock in the globally closest still-available pair.
+    // This "greedy edge" approach is far more robust than matching
+    // flags in arbitrary order — an arbitrary order can force an
+    // unlucky flag into a far-away target purely because a closer one
+    // got claimed first by someone who didn't really need it.
+    const dist = new Array(nE);
+    for (let i = 0; i < nE; i++){
+      dist[i] = new Array(nT);
+      for (let j = 0; j < nT; j++){
+        const dx = alive[i].lat - targets[j].lat, dy = alive[i].lng - targets[j].lng;
+        dist[i][j] = dx*dx + dy*dy;
+      }
+    }
+    const usedEntry = new Array(nE).fill(false);
+    const pairs = Math.min(nE, nT);
+    for (let k = 0; k < pairs; k++){
+      let bi = -1, bj = -1, bd = Infinity;
+      for (let i = 0; i < nE; i++){
+        if (usedEntry[i]) continue;
+        const row = dist[i];
+        for (let j = 0; j < nT; j++){
+          if (usedTarget[j]) continue;
+          if (row[j] < bd){ bd = row[j]; bi = i; bj = j; }
+        }
+      }
+      if (bi === -1) break;
+      usedEntry[bi] = true; usedTarget[bj] = true;
+      const entry = alive[bi], t = targets[bj];
+      setFlagVisual(entry, t.lat, t.lng, t.scale);
+      matched.add(entry);
+    }
+  }
+
+  // Existing flags that couldn't be matched (more flags than targets
+  // this tick) fade out instead of sitting stranded somewhere stale.
+  for (const entry of alive){
+    if (!matched.has(entry)) fadeOutFlag(entry);
+  }
+
+  // Leftover targets (more targets than flags) get brand-new markers.
+  for (let j = 0; j < nT; j++){
+    if (usedTarget[j]) continue;
+    const t = targets[j];
+    pool.push({
+      marker: makeFlagMarker(side, t.lat, t.lng, t.scale),
+      dead: false, lat: t.lat, lng: t.lng,
+    });
+  }
+
+  // Drop fully-removed dead entries so the pool doesn't grow forever.
+  S.flagPools[side] = pool.filter(e => !e.dead || map.hasLayer(e.marker));
+}
+
+
+// Shared by the troop label: average direction from `cell` toward its
+// immediate neighbours owned by the opposing side. Returns null if the
+// cell isn't directly on the front line.
+function neighborEnemyDirection(cell, side){
+  const enemySide = side === 'player' ? 'enemy' : 'player';
+  let dLat = 0, dLng = 0, cnt = 0;
+  for (const nb of cell.neighbors){
+    if (nb.owner === enemySide){ dLat += nb.c[0]-cell.c[0]; dLng += nb.c[1]-cell.c[1]; cnt++; }
+  }
+  if (!cnt) return null;
+  return { dLat: dLat/cnt, dLng: dLng/cnt };
+}
+// Fallback for when a point isn't directly on the frontier: direction
+// toward the single nearest enemy-owned cell anywhere.
+function nearestEnemyDirection(fromLat, fromLng, side){
+  const enemySide = side === 'player' ? 'enemy' : 'player';
+  let best = null, bestD = Infinity;
+  for (const c of S.cells){
+    if (c.owner !== enemySide) continue;
+    const dx = c.c[0]-fromLat, dy = c.c[1]-fromLng, d = dx*dx+dy*dy;
+    if (d < bestD){ bestD = d; best = c; }
+  }
+  return best ? { dLat: best.c[0]-fromLat, dLng: best.c[1]-fromLng } : null;
+}
+// Bearing in degrees (0=north, 90=east, clockwise), longitude-corrected
+// for latitude so it actually points at the target direction.
+function bearingOf(dir, atLat){
+  const latRad = (atLat || 0) * Math.PI / 180;
+  const dLngCorrected = dir.dLng * Math.cos(latRad);
+  return Math.atan2(dLngCorrected, dir.dLat) * 180 / Math.PI;
+}
+// Convert a compass bearing to a CSS rotation that leans the label
+// toward the enemy border.  sin(bearing) × maxTilt gives a clear
+// diagonal lean for east/west conflicts (sin(90°)=1 → full lean) while
+// north/south conflicts stay horizontal (sin(0°)=sin(180°)=0 → no lean,
+// which is correct — tilting text 90° for a N/S enemy is unreadable).
+// maxTilt = 55° gives a noticeable lean without being disorienting.
+function facingTilt(bearingDeg, maxTilt){
+  return Math.sin(bearingDeg * Math.PI / 180) * (maxTilt == null ? 55 : maxTilt);
+}
+
+// Troop-count label: sits near the front line (where most of your
+// troops actually are), leans toward the nearest enemy direction, and
+// scales subtly with troop count — but is always clamped to a cell you
+// actually own, so it can never drift onto enemy soil. Only disappears
+// once a side is fully eliminated (no land left at all); a temporarily
+// low standing-troop count never hides it, which is what used to make
+// it flicker in and out.
+function drawTroopLabel(side){
+  const code = side === 'player' ? S.pCode : S.eCode;
+  const ctry = S.countries[code];
+  const cells = ctry ? S.cells.filter(c => c.owner === side) : [];
+
+  if (!ctry || cells.length === 0){
+    const old = S.labelMarkers[side];
+    if (old && map.hasLayer(old)) map.removeLayer(old);
+    delete S.labelMarkers[side];
+    return;
+  }
+
+  // Position: blend 65 % toward the frontier centroid, 35 % toward the
+  // territory centroid.  This puts the label visibly close to the active
+  // front line (what the user wants) without sitting literally on top of
+  // the border flags.
+  let sLat = 0, sLng = 0;
+  for (const c of cells){ sLat += c.c[0]; sLng += c.c[1]; }
+  let lat = sLat / cells.length, lng = sLng / cells.length; // territory centroid
+
+  const fronts = frontierCellsOf(side);
+  if (fronts.length){
+    let fLat = 0, fLng = 0;
+    for (const c of fronts){ fLat += c.c[0]; fLng += c.c[1]; }
+    fLat /= fronts.length; fLng /= fronts.length;
+    lat = lat * 0.35 + fLat * 0.65;
+    lng = lng * 0.35 + fLng * 0.65;
+  }
+
+  // Snap to nearest owned cell so label is always on solid ground.
+  let best = cells[0], bd = Infinity;
+  for (const c of cells){
+    const dx = c.c[0]-lat, dy = c.c[1]-lng, d = dx*dx + dy*dy;
+    if (d < bd){ bd = d; best = c; }
+  }
+  lat = best.c[0]; lng = best.c[1];
+
+  // Lean toward the enemy border.  Using sin(bearing) gives a clear
+  // diagonal lean for E/W conflicts (the most common case) without
+  // making N/S conflicts print text sideways.
+  const dir = neighborEnemyDirection(best, side) || nearestEnemyDirection(lat, lng, side);
+  const tilt = dir ? facingTilt(bearingOf(dir, lat)) : 0;
+
+  let display = ctry.troops;
+  if (side === 'player'){
+    if (S.attackOrder) display += S.attackOrder.commit;
+    if (S.moveOrder)   display += S.moveOrder.commit;
+  } else if (S.enemyAttackOrder){
+    display += S.enemyAttackOrder.commit;
+  }
+
+  // Subtle size scaling with troop count — not dramatic.
+  const frac = ctry.max > 0 ? clamp(display / ctry.max, 0, 1) : 0;
+  const sizeScale = 0.92 + frac * 0.18; // ~0.92x .. 1.10x
+
+  const transform = `translateX(-50%) translateY(-50%) rotate(${tilt.toFixed(1)}deg) scale(${sizeScale.toFixed(3)})`;
+
+  let marker = S.labelMarkers[side];
+  if (!marker){
+    const icon = L.divIcon({
+      className: '', iconAnchor: [0, 0],
+      html: `<div class="tlbl"></div>`,
+    });
+    marker = L.marker([lat, lng], { icon, zIndexOffset: 800, interactive: false }).addTo(map);
+    S.labelMarkers[side] = marker;
+  }
+  marker.setLatLng([lat, lng]);
+  const inner = marker.getElement()?.querySelector('.tlbl');
+  if (inner){
+    inner.textContent = fmt(display);
+    inner.style.transform = transform;
+  }
+}
+
+// ── SMOOTH HUD FRAME ──────────────────────────────────────────────
+function smoothFrame(){
+  if (S.over) return;
+  const pc = S.countries[S.pCode];
+
+  let pReal = pc.troops;
+  if (S.attackOrder) pReal += S.attackOrder.commit;
+  if (S.moveOrder)   pReal += S.moveOrder.commit;
+
+  const al = C.LERP_DISP;
+  S.disp.pTroops = lerp(S.disp.pTroops, pReal, al);
+  S.disp.pCas    = lerp(S.disp.pCas,    S.cas.p, al);
+  S.disp.eCas    = lerp(S.disp.eCas,    S.cas.e, al);
+
+  $('pcas').textContent = fmt(S.disp.pCas);
+  $('ecas').textContent = fmt(S.disp.eCas);
+  $('pval').textContent = fmt(S.disp.pTroops);
+  const pct = Math.min(100, (S.disp.pTroops / pc.max) * 100);
+  $('pbar').style.width = pct + '%';
+
+  const gDate = new Date(C.DATE_START.getTime() + S.simMs * (86_400_000 / C.MS_PER_DAY));
+  $('datestr').textContent =
+    `${gDate.getUTCFullYear()}/${String(gDate.getUTCMonth()+1).padStart(2,'0')}/${String(gDate.getUTCDate()).padStart(2,'0')}`;
+
+  requestAnimationFrame(smoothFrame);
+}
+
+// ── WIN / LOSE CHECK ──────────────────────────────────────────────
+function checkWin(){
+  if (S.over) return;
+  if (S.cellsE <= 0)            { endGame(true,  'overrun'); return; }
+  if (S.cellsP <= 0)            { endGame(false, 'overrun'); return; }
+}
+
+function surrender(){
+  endGame(false, 'surrender');
+}
+
+function endGame(won, reason){
+  S.over = true;
+  if (S.audio) S.audio.pause();
+  const vidEl = $('vidplayer');
+  if (vidEl) vidEl.pause();
+
+  const pc = S.countries[S.pCode], ec = S.countries[S.eCode];
+  $('etitle').textContent = won ? '⚔ VICTORY' : '💀 DEFEAT';
+  $('etitle').style.color = won ? '#22cc55' : '#c92020';
+
+  const reasonStr = {
+    overrun: 'Front line collapsed — territory fully occupied',
+    surrender: 'You surrendered',
+  }[reason] || '';
+  const daysElapsed = Math.floor(S.simMs / C.MS_PER_DAY);
+
+  $('estats').innerHTML =
+    `<img src="${pc.flagUrl}" alt=""> Your casualties: ${fmt(S.cas.p)}<br>
+     <img src="${ec.flagUrl}" alt=""> Enemy casualties: ${fmt(S.cas.e)}<br>
+     <span style="color:#888">${reasonStr} · War lasted ${daysElapsed} days</span>`;
+  $('end').style.display = 'flex';
+}
+
+// ── AUDIO ─────────────────────────────────────────────────────────
+function initAudio() { playTrack(); }
+function playTrack() {
+  if (S.muted || S.over) return;
+  const a    = new Audio(AUDIO_FILE);
+  a.volume   = 0.45;
+  a.onended  = () => setTimeout(playTrack, 5000);
+  a.onerror  = () => console.warn('Audio not found:', AUDIO_FILE);
+  a.play().catch(() => document.addEventListener('click', () => a.play(), { once: true }));
+  S.audio = a;
+}
+function toggleMute() {
+  S.muted = !S.muted;
+  const btn = $('mbtn');
+  if (S.muted) { if (S.audio) S.audio.pause(); btn.textContent = '🔇 UNMUTE'; btn.classList.add('on'); }
+  else          { btn.textContent = '🔊 MUTE'; btn.classList.remove('on'); playTrack(); }
+}
+
+// ── BACKGROUND VIDEO ────────────────────────────────────────────────
+// Same loading/sequencing pattern as the audio track above: load one
+// file, play it, and when it ends queue up the next. Plays 1 → 2 → 3,
+// then loops back to 1. Always muted — it must never compete with the
+// audio track — and stays a small corner widget. Between clips there's
+// a 10s gap: the widget fades out the instant a clip ends, stays
+// invisible for the gap, then fades back in as the next clip starts.
+const VIDEO_GAP_MS = 10000;
+function initVideo() { playVideo(); }
+function playVideo() {
+  if (S.over) return;
+  const el = $('vidplayer'), wrap = $('vidwrap');
+  if (!el || !wrap) return;
+  el.src    = VIDEO_FILES[S.vidIndex];
+  el.muted  = true;
+  el.onended = () => {
+    wrap.style.opacity = '0';
+    setTimeout(() => {
+      S.vidIndex = (S.vidIndex + 1) % VIDEO_FILES.length;
+      playVideo();
+    }, VIDEO_GAP_MS);
+  };
+  el.onerror = () => console.warn('Video not found:', VIDEO_FILES[S.vidIndex]);
+  el.play().catch(() => document.addEventListener('click', () => el.play(), { once: true }));
+  wrap.style.opacity = '1';
+}
+
+// ── SPEED ─────────────────────────────────────────────────────────
+function setSpeed(s) {
+  S.speed = s;
+  [1, 2, 3].forEach(n => $('s'+n).classList.toggle('on', n === s));
+}
+
+// ── GAME LOOPS ────────────────────────────────────────────────────
+// The enemy AI's own attack decisions are rolled inside combatTick
+// (see maybeStartAIAttack) rather than a separate loop, so everything
+// stays on one consistent clock.
+//
+// SPEED FIX: this used to be two fixed-rate setIntervals, so changing
+// S.speed never actually made the simulation run faster — only the
+// date readout multiplied its *total* elapsed time by the current
+// speed, which is why switching speed made the date jump forward (or
+// revert) instead of smoothly speeding up. Now S.simMs is a real
+// virtual clock: every frame it accumulates real elapsed time scaled
+// by S.speed, and combatTick/regenTick fire whenever enough simulated
+// time has passed. At 2×/3× they genuinely run more often — ticks,
+// the date, regen, AI rolls, everything driven off this clock — and
+// 1× is just speed = 1, no special-case "revert".
+function startLoops() {
+  let lastT = performance.now();
+  let combatAcc = 0, regenAcc = 0;
+
+  function tick(t) {
+    let dtReal = t - lastT;
+    lastT = t;
+    if (dtReal > 1000) dtReal = 1000; // guard against tab-backgrounded jumps
+
+    if (!S.over) {
+      const dtSim = dtReal * S.speed;
+      S.simMs   += dtSim;
+      combatAcc += dtSim;
+      regenAcc  += dtSim;
+
+      let guard = 0;
+      while (combatAcc >= C.COMBAT_MS && guard < 60) { combatTick(); combatAcc -= C.COMBAT_MS; guard++; }
+      guard = 0;
+      while (regenAcc >= C.REGEN_MS && guard < 60) { regenTick(); regenAcc -= C.REGEN_MS; guard++; }
+    }
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+}
+
+// ── BOOT ──────────────────────────────────────────────────────────
+boot();
+</script>
+<script defer src="https://static.cloudflareinsights.com/beacon.min.js/v833ccba57c9e4d2798f2e76cebdd09a11778172276447" integrity="sha512-57MDmcccJXYtNnH+ZiBwzC4jb2rvgVCEokYN+L/nLlmO8rfYT/gIpW2A569iJ/3b+0UEasghjuZH/ma3wIs/EQ==" data-cf-beacon='{"version":"2024.11.0","token":"4edd5f8ec12a48cfa682ab8261b80a79","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
+</body>
+</html>
