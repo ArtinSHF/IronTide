@@ -226,6 +226,13 @@ body{background:#060606;color:#ddd;font-family:'Courier New',monospace}
 }
 .menuFlag{width:18px;height:12px;vertical-align:middle;
   border:1px solid #444;margin-right:6px;object-fit:cover}
+
+/* ═══ END-SCREEN BUTTONS & REPLAY ═══════════════════════════════ */
+.ebtns{display:flex;gap:12px;justify-content:center}
+.ebtn.ebtn-alt{background:#181818;border:1px solid #444}
+.ebtn.ebtn-alt:hover{background:#222;border-color:#666}
+#rprogarea:hover #rprogtrack,
+#rprogarea.dragging #rprogtrack{height:7px}
 </style>
 </head>
 <body>
@@ -317,12 +324,72 @@ body{background:#060606;color:#ddd;font-family:'Courier New',monospace}
     </div>
   </div>
 
+  <!-- ══ REPLAY OVERLAY ══════════════════════════════════════════ -->
+  <!-- Shown after game ends. Re-uses #cas + #vidwrap from the HUD. -->
+  <!-- No surrender or mute controls here by design.                -->
+  <div id="replayOverlay" style="display:none;position:absolute;inset:0;z-index:750;pointer-events:none">
+
+    <!-- Speed controls — top-center (clear of cas/info panels) -->
+    <div class="panel" id="rctl" style="top:12px;left:50%;transform:translateX(-50%);padding:7px 14px;display:flex;align-items:center;gap:7px;white-space:nowrap;pointer-events:auto">
+      <span class="spdlbl">REPLAY</span>
+      <div class="csep"></div>
+      <button class="cbtn on" id="rsp1" onclick="setReplaySpeed(1)">1×</button>
+      <button class="cbtn"    id="rsp2" onclick="setReplaySpeed(2)">2×</button>
+      <button class="cbtn"    id="rsp3" onclick="setReplaySpeed(3)">3×</button>
+      <div class="csep"></div>
+      <button class="cbtn" onclick="exportMP4()">⬇ MP4</button>
+      <div class="csep"></div>
+      <button class="cbtn" onclick="closeReplay()">✕ CLOSE</button>
+    </div>
+
+    <!-- Replay info — top-right (same slot as game #info, which is hidden) -->
+    <div class="panel" style="top:12px;right:12px;padding:9px 13px;min-width:168px;text-align:right;pointer-events:auto">
+      <div class="ilbl">DATE</div>
+      <div id="rdate" style="font-size:15px;font-weight:bold;color:#ddd;letter-spacing:.1em;margin-bottom:7px">—</div>
+      <div class="ilbl" style="color:#5e8eff">YOUR FORCES</div>
+      <div id="rptroops" style="font-size:17px;font-weight:bold;color:#5e8eff;line-height:1">—</div>
+      <div class="ilbl" style="color:#ff5050;margin-top:5px">ENEMY FORCES</div>
+      <div id="retroops" style="font-size:17px;font-weight:bold;color:#ff5050;line-height:1">—</div>
+    </div>
+
+    <!-- YouTube-style seekable scrubber — very bottom -->
+    <!-- Pointer-events handle both mouse and touch (touch-action:none prevents scroll) -->
+    <div id="rprogarea"
+         style="position:absolute;bottom:0;left:0;right:0;height:22px;cursor:pointer;display:flex;align-items:flex-end;pointer-events:auto;touch-action:none"
+         onpointerdown="rprogDown(event)" onpointermove="rprogMove(event)"
+         onpointerup="rprogUp()" onpointercancel="rprogUp()" onpointerleave="rprogLeave()">
+      <div id="rprogtrack" style="width:100%;height:5px;position:relative;background:#1e1e1e;transition:height .12s ease">
+        <!-- Hover preview fill (grey) -->
+        <div id="rprogBuf"   style="position:absolute;inset:0;width:0%;background:rgba(255,255,255,.18);pointer-events:none"></div>
+        <!-- Actual playback progress (red) -->
+        <div id="rprog"      style="position:absolute;inset:0;width:0%;background:#c92020;pointer-events:none"></div>
+        <!-- Draggable thumb circle -->
+        <div id="rprogThumb" style="position:absolute;top:50%;left:0%;transform:translate(-50%,-50%);width:13px;height:13px;border-radius:50%;background:#fff;pointer-events:none;box-shadow:0 0 4px rgba(0,0,0,.55);opacity:0;transition:opacity .1s"></div>
+      </div>
+    </div>
+
+    <!-- MP4 encode progress overlay (covers full replay overlay during export) -->
+    <div id="encodeOverlay" style="position:absolute;inset:0;background:rgba(0,0,0,.92);z-index:900;display:none;flex-direction:column;align-items:center;justify-content:center;pointer-events:auto">
+      <div style="font-size:12px;letter-spacing:.24em;color:#ddd;margin-bottom:18px">ENCODING REPLAY…</div>
+      <div style="width:320px;height:3px;background:#222;border-radius:2px">
+        <div id="encProg" style="height:100%;background:#c92020;width:0%;border-radius:2px;transition:width .08s linear"></div>
+      </div>
+      <div id="encPct"    style="font-size:10px;color:#888;margin-top:10px;letter-spacing:.18em">0%</div>
+      <div id="encStatus" style="font-size:9px;color:#555;margin-top:5px;letter-spacing:.12em">INITIALIZING</div>
+    </div>
+
+  </div>
+
   <!-- End screen -->
+
   <div id="end">
     <div class="ebox">
       <div id="etitle">—</div>
       <div id="estats">—</div>
-      <button class="ebtn" onclick="location.reload()">MAIN MENU</button>
+      <div class="ebtns">
+        <button class="ebtn" onclick="showReplay()">▶ WATCH REPLAY</button>
+        <button class="ebtn ebtn-alt" onclick="location.reload()">MAIN MENU</button>
+      </div>
     </div>
   </div>
 </div>
@@ -433,6 +500,7 @@ const C = {
   DATE_START:   new Date('2020-01-01T00:00:00Z'),
   MS_PER_DAY:   1000,
   LERP_DISP:    0.08,
+  REPLAY_SNAP_MS: 1000,   // record one snapshot every 1 real second
 
   // ─ colours ─
   COL_PLAYER:   '#3060d8',    // blue (YOU)
@@ -519,6 +587,8 @@ const S = {
   gameStartMs: 0,
   simMs: 0,
   disp: { pTroops: 0, pCas: 0, eCas: 0 },
+  replay: [],           // snapshots recorded during gameplay
+  replaySnapTime: 0,    // performance.now() of last recorded snapshot
 };
 let map;
 
@@ -830,6 +900,9 @@ function startGame() {
   renderCells();
   renderFlagsAndLabels();
   refreshOrderHUD();
+  S.replay = [];
+  S.replaySnapTime = performance.now();
+  recordReplaySnapshot();   // snapshot of start state (t=0)
   initAudio();
   initVideo();
   startLoops();
@@ -2406,21 +2479,366 @@ function endGame(won, reason){
   const vidEl = $('vidplayer');
   if (vidEl) vidEl.pause();
 
+  recordReplaySnapshot(); // capture final state
+
   const pc = S.countries[S.pCode], ec = S.countries[S.eCode];
   $('etitle').textContent = won ? '⚔ VICTORY' : '💀 DEFEAT';
   $('etitle').style.color = won ? '#22cc55' : '#c92020';
-
   const reasonStr = {
-    overrun: 'Front line collapsed — territory fully occupied',
+    overrun:   'Front line collapsed — territory fully occupied',
     surrender: 'You surrendered',
   }[reason] || '';
   const daysElapsed = Math.floor(S.simMs / C.MS_PER_DAY);
-
   $('estats').innerHTML =
     `<img src="${pc.flagUrl}" alt=""> Your casualties: ${fmt(S.cas.p)}<br>
      <img src="${ec.flagUrl}" alt=""> Enemy casualties: ${fmt(S.cas.e)}<br>
      <span style="color:#888">${reasonStr} · War lasted ${daysElapsed} days</span>`;
-  $('end').style.display = 'flex';
+
+  // Fade HUD out. #cas and #vidwrap are preserved — replay will re-show them.
+  ['info','datepanel','ctrl'].forEach(id => {
+    const el=$(id); if(el){ el.style.transition='opacity .5s'; el.style.opacity='0'; }
+  });
+  const casEl=$('cas'), vwEl=$('vidwrap');
+  if(casEl){ casEl.style.transition='opacity .5s'; casEl.style.opacity='0'; }
+  if(vwEl) { vwEl.style.transition='opacity .5s';  vwEl.style.opacity='0'; }
+
+  // Clear all live order markers
+  clearAttackOrder(false); clearMoveOrder(); clearRetreatOrder();
+  clearEnemyAttackOrder(false); clearEnemyRetreatOrder();
+
+  // Fade flags, remove troop labels and front line
+  for (const side of ['player','enemy'])
+    for (const entry of S.flagPools[side]) fadeOutFlag(entry);
+  ['player','enemy'].forEach(side => {
+    const m=S.labelMarkers[side];
+    if(m && map.hasLayer(m)) map.removeLayer(m);
+    delete S.labelMarkers[side];
+  });
+  if(S.frontLineLayer && map.hasLayer(S.frontLineLayer)){
+    map.removeLayer(S.frontLineLayer); S.frontLineLayer=null;
+  }
+
+  // Victory sweep → 1.5 s pause → end screen
+  victorySweep(won ? 'player' : 'enemy', () => {
+    setTimeout(() => {
+      ['info','datepanel','ctrl'].forEach(id => {
+        const el=$(id); if(el){ el.style.transition=''; el.style.opacity=''; el.style.display='none'; }
+      });
+      if(casEl){ casEl.style.transition=''; casEl.style.opacity=''; casEl.style.display='none'; }
+      if(vwEl) { vwEl.style.transition='';  vwEl.style.opacity='';  vwEl.style.display='none'; }
+      $('end').style.display='flex';
+    }, 1500);
+  });
+}
+
+// ── VICTORY SWEEP ─────────────────────────────────────────────────
+// BFS from the winner's existing cells inward through the loser's
+// territory so the "outermost" loser cells flip first.
+function victorySweep(winner, onComplete){
+  const loserSide = winner==='player' ? 'enemy' : 'player';
+  const loserSet  = new Set(S.cells.filter(c=>c.owner===loserSide));
+  if (!loserSet.size){ onComplete(); return; }
+
+  const levels=[], visited=new Set(), seed=[];
+  for (const cell of loserSet)
+    if (cell.neighbors.some(nb=>nb.owner===winner)){ visited.add(cell); seed.push(cell); }
+
+  if (!seed.length){
+    // Entire loser territory is disconnected — just take it all at once
+    for (const c of loserSet) c.owner=winner;
+    refreshCells([...loserSet].flatMap(c=>[c,...c.neighbors]));
+    onComplete(); return;
+  }
+
+  let cur=seed;
+  while (cur.length){
+    levels.push(cur);
+    const nxt=[];
+    for (const cell of cur)
+      for (const nb of cell.neighbors)
+        if (loserSet.has(nb) && !visited.has(nb)){ visited.add(nb); nxt.push(nb); }
+    cur=nxt;
+  }
+
+  // Target 2–4 s total; clamp per-level delay to 30–120 ms
+  const msPerLevel=Math.max(30, Math.min(120, 3000/levels.length));
+  levels.forEach((level,i)=>{
+    setTimeout(()=>{
+      for (const c of level) c.owner=winner;
+      refreshCells(level.flatMap(c=>[c,...c.neighbors]));
+      if (i===levels.length-1) onComplete();
+    }, i*msPerLevel);
+  });
+}
+
+// ── REPLAY RECORDING ──────────────────────────────────────────────
+function recordReplaySnapshot(){
+  if (!S.cells.length || !S.pCode || !S.eCode) return;
+  const pc=S.countries[S.pCode], ec=S.countries[S.eCode];
+  S.replay.push({
+    owners:  S.cells.map(c=>c.owner==='player'?'p':'e'),
+    pTroops: (pc?.troops||0)+(S.attackOrder?.commit||0)+(S.moveOrder?.commit||0),
+    eTroops: (ec?.troops||0)+(S.enemyAttackOrder?.commit||0),
+    pCas:    S.cas.p,
+    eCas:    S.cas.e,
+    simMs:   S.simMs,
+  });
+}
+
+// ── REPLAY VIEWER ─────────────────────────────────────────────────
+const Replay={speed:1, playing:false, index:0, startTime:0, raf:null};
+let rprogDragging=false, rprogHovering=false, _replayAudio=null;
+
+function showReplay(){
+  if (!S.replay.length){ alert('No replay data recorded.'); return; }
+  $('end').style.display='none';
+  $('replayOverlay').style.display='block';
+
+  // Re-show casualties panel and video overlay
+  const casEl=$('cas'), vwEl=$('vidwrap');
+  if(casEl){ casEl.style.display=''; casEl.style.opacity='1'; }
+  if(vwEl) { vwEl.style.display='';  vwEl.style.opacity='1'; }
+
+  // Resume background video on loop during replay
+  const vidEl=$('vidplayer');
+  if(vidEl){
+    vidEl.loop=true;
+    vidEl.src=VIDEO_FILES[0];
+    vidEl.play().catch(()=>{});
+  }
+
+  // Restart audio track for replay
+  _startReplayAudio();
+
+  // Reset playback head
+  Replay.speed=1; Replay.index=0; Replay.playing=true;
+  Replay.startTime=performance.now();
+  rprogDragging=false; rprogHovering=false;
+  [1,2,3].forEach(n=>$('rsp'+n).classList.toggle('on',n===1));
+
+  // Clear flag pools so renderFlagsAndLabels() rebuilds them fresh
+  // (endGame faded them out; we need a clean slate for replay)
+  for (const side of ['player','enemy']){
+    for (const entry of S.flagPools[side])
+      if(entry.marker && map.hasLayer(entry.marker)) map.removeLayer(entry.marker);
+    S.flagPools[side]=[];
+  }
+  S.labelMarkers={};
+
+  applyReplaySnapshot(S.replay[0]);
+  tickReplay();
+}
+
+function closeReplay(){
+  Replay.playing=false;
+  if(Replay.raf){ cancelAnimationFrame(Replay.raf); Replay.raf=null; }
+  _stopReplayAudio();
+
+  // Pause + hide video overlay
+  const vidEl=$('vidplayer'), vwEl=$('vidwrap');
+  if(vidEl){ vidEl.pause(); vidEl.loop=false; }
+  if(vwEl)  vwEl.style.display='none';
+
+  // Hide casualties panel
+  const casEl=$('cas');
+  if(casEl) casEl.style.display='none';
+
+  $('replayOverlay').style.display='none';
+
+  // Restore map to final recorded state
+  if(S.replay.length) applyReplaySnapshot(S.replay[S.replay.length-1]);
+  $('end').style.display='flex';
+}
+
+function setReplaySpeed(s){
+  // Preserve current position when speed changes
+  const now=performance.now();
+  const elapsed=(now-Replay.startTime)*Replay.speed;
+  Replay.speed=s; Replay.startTime=now-elapsed/s;
+  [1,2,3].forEach(n=>$('rsp'+n).classList.toggle('on',n===s));
+}
+
+function applyReplaySnapshot(snap){
+  if(!snap) return;
+  // Apply ownership to all cells
+  for (let i=0;i<S.cells.length;i++)
+    S.cells[i].owner=snap.owners[i]==='p'?'player':'enemy';
+  // Update country troop counts so drawTroopLabel renders the right numbers
+  const pc=S.countries[S.pCode], ec=S.countries[S.eCode];
+  if(pc) pc.troops=snap.pTroops;
+  if(ec) ec.troops=snap.eTroops;
+  renderCells();
+  renderFlagsAndLabels(); // restores flags, troop-count labels, and front line
+  // Replay info panel
+  const gDate=new Date(C.DATE_START.getTime()+snap.simMs*(86_400_000/C.MS_PER_DAY));
+  $('rdate').textContent=
+    `${gDate.getUTCFullYear()}/${String(gDate.getUTCMonth()+1).padStart(2,'0')}/${String(gDate.getUTCDate()).padStart(2,'0')}`;
+  $('rptroops').textContent=fmt(snap.pTroops);
+  $('retroops').textContent=fmt(snap.eTroops);
+  // Casualties panel (re-used from HUD)
+  $('pcas').textContent=fmt(snap.pCas);
+  $('ecas').textContent=fmt(snap.eCas);
+}
+
+function tickReplay(){
+  if(!Replay.playing) return;
+  const now=performance.now();
+  let idx=Math.floor((now-Replay.startTime)*Replay.speed/C.REPLAY_SNAP_MS);
+  if(idx>=S.replay.length){ Replay.startTime=now; idx=0; } // auto-loop
+  if(idx!==Replay.index){ Replay.index=idx; applyReplaySnapshot(S.replay[idx]); }
+  // Update progress fill
+  const pct=S.replay.length>1?(Replay.index/(S.replay.length-1))*100:100;
+  $('rprog').style.width=Math.min(100,pct)+'%';
+  // Thumb follows playback when user isn't hovering/dragging
+  if(!rprogHovering && !rprogDragging)
+    Object.assign($('rprogThumb').style,{left:Math.min(100,pct)+'%', opacity:'1'});
+  Replay.raf=requestAnimationFrame(tickReplay);
+}
+
+// ── PROGRESS SCRUBBER (YouTube-style pointer events) ──────────────
+function _rprogFrac(clientX){
+  const r=$('rprogtrack').getBoundingClientRect();
+  return Math.max(0,Math.min(1,(clientX-r.left)/r.width));
+}
+function _rprogSeek(frac){
+  const idx=Math.round(frac*(S.replay.length-1));
+  // Rebase startTime so tickReplay lands on this idx at current speed
+  Replay.startTime=performance.now()-(idx*C.REPLAY_SNAP_MS)/Replay.speed;
+  if(idx!==Replay.index){ Replay.index=idx; applyReplaySnapshot(S.replay[idx]); }
+  $('rprog').style.width=(frac*100)+'%';
+  Object.assign($('rprogThumb').style,{left:(frac*100)+'%', opacity:'1'});
+}
+function rprogDown(e){
+  e.preventDefault();
+  e.currentTarget.setPointerCapture(e.pointerId); // keeps events during drag
+  e.currentTarget.classList.add('dragging');
+  rprogDragging=true;
+  _rprogSeek(_rprogFrac(e.clientX));
+}
+function rprogMove(e){
+  const frac=_rprogFrac(e.clientX);
+  if(rprogDragging){
+    _rprogSeek(frac);
+  } else {
+    rprogHovering=true;
+    $('rprogBuf').style.width=(frac*100)+'%';
+    Object.assign($('rprogThumb').style,{left:(frac*100)+'%', opacity:'1'});
+  }
+}
+function rprogUp(){
+  rprogDragging=false;
+  $('rprogarea').classList.remove('dragging');
+}
+function rprogLeave(){
+  if(rprogDragging) return; // pointer capture keeps events; skip until pointerup
+  rprogHovering=false;
+  $('rprogBuf').style.width='0%';
+  // tickReplay will snap thumb back to playback position next frame
+}
+
+// ── REPLAY AUDIO ──────────────────────────────────────────────────
+function _startReplayAudio(){
+  _stopReplayAudio();
+  if(S.muted) return;
+  const a=new Audio(AUDIO_FILE);
+  a.volume=0.45;
+  a.onended=()=>{ if(Replay.playing) setTimeout(_startReplayAudio,5000); };
+  a.onerror=()=>{};
+  a.play().catch(()=>{});
+  _replayAudio=a;
+}
+function _stopReplayAudio(){
+  if(_replayAudio){ _replayAudio.pause(); _replayAudio=null; }
+}
+
+// ── MP4 EXPORT ────────────────────────────────────────────────────
+// Renders each replay snapshot to a 1280×720 off-screen canvas that
+// looks EXACTLY like the in-game replay: same panel style, front line,
+// territory flags, troop-count labels, casualty panel, video overlay,
+// and watermark. Only the Close / MP4 / speed buttons / scrubber are
+// omitted (those are UI controls, not game content).
+// Chrome / Edge only (WebCodecs required).
+
+/* ── screen-capture export ────────────────────────────────────── */
+// Literally screen-records the browser tab while the replay plays back.
+// Captures exactly what you see: satellite tiles, Leaflet layers, video,
+// flags, labels, casualties panels — no canvas tricks, no CORS issues.
+// Only the speed controls, ⬇ MP4 button, close button, and scrubber are
+// hidden so they don't appear in the video.
+// Output: .mp4 on Chrome 130+ / Edge, .webm fallback on older builds.
+
+async function exportMP4(){
+  if(!navigator.mediaDevices?.getDisplayMedia){
+    alert('⚠ Screen capture requires Chrome or Edge 107+. Please update your browser.');
+    return;
+  }
+  if(!S.replay.length){ alert('No replay data to export.'); return; }
+
+  // ── Hide replay UI controls that shouldn't appear in the recording ──
+  const rctl=$("rctl"), rpa=$("rprogarea");
+  if(rctl) rctl.style.display='none';
+  if(rpa)  rpa.style.display='none';
+
+  // ── Request tab capture ──
+  // preferCurrentTab / selfBrowserSurface:'include' hints Chrome 107+
+  // to pre-select this tab in the picker — silently ignored elsewhere.
+  let stream;
+  try{
+    stream=await navigator.mediaDevices.getDisplayMedia({
+      video:{ frameRate:30, displaySurface:'browser' },
+      audio:false,
+      preferCurrentTab:true,
+      selfBrowserSurface:'include',
+    });
+  }catch(e){
+    // User cancelled or dismissed the tab-picker dialog
+    if(rctl) rctl.style.display='';
+    if(rpa)  rpa.style.display='';
+    return;
+  }
+
+  // ── Pick the best supported container ──
+  const mtype=
+    MediaRecorder.isTypeSupported('video/mp4;codecs=avc1') ? 'video/mp4;codecs=avc1':
+    MediaRecorder.isTypeSupported('video/mp4')             ? 'video/mp4'            :
+                                                             'video/webm';
+  const ext=mtype.startsWith('video/mp4')?'mp4':'webm';
+
+  const chunks=[];
+  let rec;
+
+  const doStop=()=>{
+    stream.getTracks().forEach(t=>t.stop());
+    const blob=new Blob(chunks,{type:mtype});
+    const url=URL.createObjectURL(blob);
+    Object.assign(document.createElement('a'),{href:url,download:'irontide-replay.'+ext}).click();
+    setTimeout(()=>URL.revokeObjectURL(url),15000);
+    // Restore replay UI
+    if(rctl) rctl.style.display='';
+    if(rpa)  rpa.style.display='';
+    Replay.playing=true; tickReplay();
+  };
+
+  rec=new MediaRecorder(stream,{mimeType:mtype, videoBitsPerSecond:8_000_000});
+  rec.ondataavailable=e=>{ if(e.data.size>0) chunks.push(e.data); };
+  rec.onstop=doStop;
+
+  // Handle user clicking "Stop sharing" in browser's native sharing bar
+  stream.getTracks()[0].onended=()=>{ if(rec.state==='recording') rec.stop(); };
+
+  // ── Start recording, brief settle pause, then kick off replay at 1× ──
+  rec.start(250);
+  await new Promise(r=>setTimeout(r,400));
+
+  setReplaySpeed(1);
+  Replay.index=0; Replay.playing=true;
+  Replay.startTime=performance.now();
+  applyReplaySnapshot(S.replay[0]);
+  tickReplay();
+
+  // ── Auto-stop once every snapshot has played (+ 1 s tail buffer) ──
+  const totalMs=(S.replay.length+1)*C.REPLAY_SNAP_MS+1000;
+  setTimeout(()=>{ if(rec.state==='recording') rec.stop(); }, totalMs);
 }
 
 // ── AUDIO ─────────────────────────────────────────────────────────
@@ -2499,6 +2917,10 @@ function startLoops() {
     if (dtReal > 1000) dtReal = 1000; // guard against tab-backgrounded jumps
 
     if (!S.over) {
+      if (t - S.replaySnapTime >= C.REPLAY_SNAP_MS) {
+        S.replaySnapTime = t;
+        recordReplaySnapshot();
+      }
       const dtSim = dtReal * S.speed;
       S.simMs   += dtSim;
       combatAcc += dtSim;
