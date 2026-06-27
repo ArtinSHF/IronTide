@@ -2775,29 +2775,56 @@ async function exportMP4(){
   if(!S.replay.length){ alert('No replay data to export.'); return; }
 
   // ── Hide replay UI controls that shouldn't appear in the recording ──
-  const rctl=$("rctl"), rpa=$("rprogarea");
+  const rctl=$('rctl'), rpa=$('rprogarea');
   if(rctl) rctl.style.display='none';
   if(rpa)  rpa.style.display='none';
 
-  // ── Request tab capture ──
+  // ── Lock the Leaflet map — no zoom or pan during recording ──
+  map.scrollWheelZoom.disable();
+  map.doubleClickZoom.disable();
+  map.touchZoom.disable();
+  map.keyboard.disable();
+  map.dragging.disable();
+  map.boxZoom.disable();
+
+  // ── Hide mouse cursor so it's invisible in the recording ──
+  document.documentElement.style.cursor='none';
+
+  // Restore everything — called on cancel, stop-sharing, and normal finish
+  const restore=()=>{
+    if(rctl) rctl.style.display='';
+    if(rpa)  rpa.style.display='';
+    document.documentElement.style.cursor='';
+    map.scrollWheelZoom.enable();
+    map.doubleClickZoom.enable();
+    map.touchZoom.enable();
+    map.keyboard.enable();
+    map.dragging.enable();
+    map.boxZoom.enable();
+  };
+
+  // ── Request tab capture at max quality, cursor excluded from stream ──
   // preferCurrentTab / selfBrowserSurface:'include' hints Chrome 107+
   // to pre-select this tab in the picker — silently ignored elsewhere.
   let stream;
   try{
     stream=await navigator.mediaDevices.getDisplayMedia({
-      video:{ frameRate:30, displaySurface:'browser' },
+      video:{
+        frameRate:{ ideal:60, max:60 },   // 60 fps for smooth playback
+        width:{ ideal:7680 },             // request max; capped at screen res
+        height:{ ideal:4320 },
+        displaySurface:'browser',
+        cursor:'never',                   // exclude OS cursor from video stream
+      },
       audio:false,
       preferCurrentTab:true,
       selfBrowserSurface:'include',
     });
   }catch(e){
-    // User cancelled or dismissed the tab-picker dialog
-    if(rctl) rctl.style.display='';
-    if(rpa)  rpa.style.display='';
-    return;
+    restore(); return; // user cancelled picker
   }
 
-  // ── Pick the best supported container ──
+  // ── Pick best supported container ──
   const mtype=
     MediaRecorder.isTypeSupported('video/mp4;codecs=avc1') ? 'video/mp4;codecs=avc1':
     MediaRecorder.isTypeSupported('video/mp4')             ? 'video/mp4'            :
@@ -2813,13 +2840,12 @@ async function exportMP4(){
     const url=URL.createObjectURL(blob);
     Object.assign(document.createElement('a'),{href:url,download:'irontide-replay.'+ext}).click();
     setTimeout(()=>URL.revokeObjectURL(url),15000);
-    // Restore replay UI
-    if(rctl) rctl.style.display='';
-    if(rpa)  rpa.style.display='';
+    restore();
     Replay.playing=true; tickReplay();
   };
 
-  rec=new MediaRecorder(stream,{mimeType:mtype, videoBitsPerSecond:8_000_000});
+  // 40 Mbps — maximum practical quality for screen recording
+  rec=new MediaRecorder(stream,{mimeType:mtype, videoBitsPerSecond:40_000_000});
   rec.ondataavailable=e=>{ if(e.data.size>0) chunks.push(e.data); };
   rec.onstop=doStop;
 
