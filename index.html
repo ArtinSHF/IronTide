@@ -254,6 +254,7 @@ body{background:#060606;color:#ddd;font-family:'Courier New',monospace}
         <select id="esel" disabled><option value="">— SELECT YOUR NATION FIRST —</option></select>
         <div class="snote" id="bnote">Enemy must share a land border</div>
       </div>
+      <div class="snote" id="allianceNote">Coalitions are formed from nearby countries at deployment. Allies contribute troops, territory and fronts.</div>
       <button id="sbtn" disabled onclick="startGame()">▶ DEPLOY FORCES</button>
     </div>
   </div>
@@ -283,6 +284,7 @@ body{background:#060606;color:#ddd;font-family:'Courier New',monospace}
     <div class="imax" id="pmax">/ — MAX</div>
     <div class="barw"><div class="barf" id="pbar" style="width:50%"></div></div>
     <div class="rlbl" id="rlbl">REGEN: —</div>
+    <div class="rlbl" id="allylbl">ALLIANCE: —</div>
     <div class="olbl" id="olbl">NO ACTIVE ORDER</div>
     <div class="olbl" id="ealert" style="display:none;color:#ff9d2b">⚠ ENEMY OFFENSIVE — TROOPS DEFENDING</div>
   </div>
@@ -426,8 +428,11 @@ const FLAG_URL   = iso2 => `https://flagcdn.com/w40/${iso2.toLowerCase()}.png`;
 
 // ── CONSTANTS ─────────────────────────────────────────────────────
 const C = {
-  TROOP_PCT:    0.25,
-  TROOP_CAP:    80_000_000,
+  // A field army is a mobilised fraction of the population, not the whole
+  // population wearing helmets.  This keeps small states small while still
+  // letting demographic giants feel formidable.
+  TROOP_PCT:    0.035,
+  TROOP_CAP:    35_000_000,
   START_PCT:    0.50,
 
   // ─ cell grid (MUCH denser for smooth borders) ─
@@ -451,9 +456,9 @@ const C = {
   // ATTACKER_LOSS_FRAC / DEFENDER_LOSS_FRAC replace the fixed values
   // above everywhere they appeared in combat functions.
   // TROOPS_PER_FLIP_FRAC scales the commit-pool drain the same way.
-  ATTACKER_LOSS_FRAC:   0.000015,  // attacker bleeds ~0.0015 % of their max per flip
-  DEFENDER_LOSS_FRAC:   0.000022,  // defender bleeds ~0.0022 % of their max per flip
-  COUNTER_LOSS_FRAC:    0.000010,  // counter-attacker bleeds ~0.001 % of their max per flip
+  ATTACKER_LOSS_FRAC:   0.000030,
+  DEFENDER_LOSS_FRAC:   0.000046,
+  COUNTER_LOSS_FRAC:    0.000022,
   TROOPS_PER_FLIP_FRAC: 0.000030,  // commit pool drains ~0.003 % of attacker max per flip
 
   // ─ troop-ratio combat scaling — steep on purpose: a big numerical
@@ -495,7 +500,9 @@ const C = {
 
   // ─ generic ─
   REGEN_MS:     1000,
-  REGEN_RATE:   0.0010,
+  // Replacements are deliberately much slower than combat.  A shattered
+  // army must recover behind the line instead of instantly respawning.
+  REGEN_RATE:   0.00016,
   REGEN_MULT_SMOOTH: 0.05,    // how fast regen rate eases toward the held-territory level
   DATE_START:   new Date('2020-01-01T00:00:00Z'),
   MS_PER_DAY:   1000,
@@ -555,6 +562,17 @@ const POP_FALLBACK = {
   SYR:23000000,SOL:18000000
 };
 
+// Deliberately a short, recognisable roster.  These are territorial starts,
+// not cosmetic renames: their modern member states are fused into one country
+// before the grid is built.
+const EMPIRES = {
+  EMP_ROM: { name:'Roman Empire', iso2:'it', members:['ITA','FRA','ESP','PRT','GRC','TUR','EGY','TUN','DZA','MAR','LBY','HRV','SVN','ALB','MKD','SRB','BGR','ROU','HUN','AUT','CHE','BEL','NLD','SYR','LBN','ISR','JOR'] },
+  EMP_OTT: { name:'Ottoman Empire', iso2:'tr', members:['TUR','GRC','BGR','SRB','BIH','ALB','MKD','ROU','HUN','SYR','LBN','ISR','JOR','IRQ','SAU','EGY','LBY','TUN','DZA'] },
+  EMP_BRI: { name:'British Empire', iso2:'gb', members:['GBR','IRL','CAN','AUS','NZL','IND','PAK','BGD','ZAF','EGY','KEN','NGA','GHA','MYS'] },
+  EMP_SOV: { name:'Soviet Union', iso2:'ru', members:['RUS','UKR','BLR','MDA','EST','LVA','LTU','GEO','ARM','AZE','KAZ','UZB','TKM','KGZ','TJK'] },
+  EMP_MNG: { name:'Mongol Empire', iso2:'mn', members:['MNG','CHN','KAZ','RUS','IRN','IRQ','TUR','AFG','PAK','KGZ','UZB','TKM','TJK','AZE','ARM','GEO'] },
+};
+
 // ── STATE ─────────────────────────────────────────────────────────
 const S = {
   countries: {},
@@ -589,6 +607,7 @@ const S = {
   disp: { pTroops: 0, pCas: 0, eCas: 0 },
   replay: [],           // snapshots recorded during gameplay
   replaySnapTime: 0,    // performance.now() of last recorded snapshot
+  selections: { player:null, enemy:null },
 };
 let map;
 
@@ -612,6 +631,10 @@ function pointInRing(pt, ring){
   return inside;
 }
 function pointInFeature(lonlat, feat){
+  // Russia (and any future trans-dateline faction) is gridded in an unwrapped
+  // longitude space; GeoJSON itself remains canonical, so convert test points
+  // back before ray-casting.
+  if (feat._wrapDateline && lonlat[0] > 180) lonlat = [lonlat[0] - 360, lonlat[1]];
   const g = feat.geometry;
   if (!g) return false;
   if (g.type === 'Polygon'){
@@ -634,7 +657,9 @@ function pointInFeature(lonlat, feat){
 }
 function featureBBox(feat){
   let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
-  const each = ring => { for (const [x,y] of ring){
+  const each = ring => { for (const [rawX,y] of ring){
+    // Do not let a sliver across the date line make a 360° bounding box.
+    const x = feat._wrapDateline && rawX < 0 ? rawX + 360 : rawX;
     if (x<minX) minX=x; if (y<minY) minY=y;
     if (x>maxX) maxX=x; if (y>maxY) maxY=y;
   }};
@@ -690,6 +715,9 @@ async function boot() {
         borders: rc.borders || [],
         ctr, feat,
       };
+      // The Russian MultiPolygon crosses ±180°.  Mark it once at load time so
+      // both the grid bbox and point tests use the same longitude convention.
+      if (rc.cca3 === 'RUS') feat._wrapDateline = true;
     }
 
     bar.style.width = '100%';
@@ -716,7 +744,24 @@ function fillMenu() {
     const o = document.createElement('option');
     o.value = k; o.textContent = name; ps.appendChild(o);
   });
+  const empireGroup = document.createElement('optgroup');
+  empireGroup.label = 'HISTORICAL EMPIRES — MODERN-DAY TERRITORY';
+  Object.entries(EMPIRES).forEach(([k, e]) => {
+    const o = document.createElement('option'); o.value = k; o.textContent = e.name;
+    empireGroup.appendChild(o);
+  });
+  ps.appendChild(empireGroup);
   ps.onchange = () => { S.pCode = ps.value || null; rebuildEnemy(); };
+}
+
+function selectionMembers(code){
+  return EMPIRES[code]?.members || (code ? [code] : []);
+}
+function selectionBorders(code){
+  const members = new Set(selectionMembers(code));
+  const out = new Set();
+  for (const m of members) for (const b of (S.countries[m]?.borders || [])) if (!members.has(b) && S.countries[b]) out.add(b);
+  return [...out];
 }
 
 function rebuildEnemy() {
@@ -724,7 +769,7 @@ function rebuildEnemy() {
   es.innerHTML = '<option value="">— SELECT —</option>';
   es.disabled = true; S.eCode = null; $('sbtn').disabled = true;
   if (!S.pCode) return;
-  const borders = (S.countries[S.pCode]?.borders || []).filter(b => S.countries[b]);
+  const borders = selectionBorders(S.pCode);
   if (!borders.length) {
     note.textContent = '⚠ No land borders — pick another';
     note.style.color = '#c92020'; return;
@@ -869,14 +914,69 @@ function frontierCellsOf(side){
   return out;
 }
 
+function mergeFeatures(members){
+  const polygons = [];
+  let wraps = false;
+  for (const code of members){
+    const f = S.countries[code]?.feat;
+    if (!f?.geometry) continue;
+    wraps ||= !!f._wrapDateline;
+    if (f.geometry.type === 'Polygon') polygons.push(f.geometry.coordinates);
+    if (f.geometry.type === 'MultiPolygon') polygons.push(...f.geometry.coordinates);
+  }
+  return { type:'Feature', _wrapDateline:wraps, properties:{}, geometry:{ type:'MultiPolygon', coordinates:polygons } };
+}
+
+function strategicAllies(anchor, forbidden, count){
+  const blocked = new Set(forbidden);
+  const candidates = selectionBorders(anchor)
+    .filter(c => !blocked.has(c))
+    .map(c => S.countries[c])
+    .filter(Boolean)
+    // Nearby states with real capacity are useful allies; this is intentional
+    // coalition logic rather than a random "extra country" roll.
+    .sort((a,b) => b.max - a.max);
+  return candidates.slice(0, count).map(c => Object.keys(S.countries).find(k => S.countries[k] === c));
+}
+
+function createFaction(selection, side, allies){
+  const primaryMembers = selectionMembers(selection).filter(c => S.countries[c]);
+  const members = [...new Set(primaryMembers.concat(allies || []))];
+  const originals = members.map(c => S.countries[c]).filter(Boolean);
+  const pop = originals.reduce((n,c) => n + c.pop, 0);
+  const max = Math.min(Math.floor(pop * C.TROOP_PCT), C.TROOP_CAP);
+  const ctr = originals.reduce((a,c) => [a[0] + c.ctr[0] * c.pop / Math.max(1,pop), a[1] + c.ctr[1] * c.pop / Math.max(1,pop)], [0,0]);
+  const base = EMPIRES[selection];
+  const primary = base || S.countries[selection];
+  const code = side === 'player' ? '__PLAYER_COALITION__' : '__ENEMY_COALITION__';
+  S.countries[code] = {
+    name: base ? base.name : primary.name,
+    iso2: base ? base.iso2 : primary.iso2,
+    flagUrl: FLAG_URL(base ? base.iso2 : primary.iso2), pop, max, troops:0,
+    ctrl:side, borders:[], ctr, feat:mergeFeatures(members), members,
+    allies: members.filter(c => c !== selection), primary:selection, regenMult:1,
+  };
+  return code;
+}
+
 // ── START GAME ────────────────────────────────────────────────────
 function startGame() {
   if (!S.pCode || !S.eCode) return;
 
-  for (const [k, c] of Object.entries(S.countries)) {
-    if (k === S.pCode)      { c.ctrl = 'player'; c.troops = Math.floor(c.max * C.START_PCT); c.regenMult = 1; }
-    else if (k === S.eCode) { c.ctrl = 'enemy';  c.troops = Math.floor(c.max * C.START_PCT); c.regenMult = 1; }
-  }
+  // Turn the chosen country into a real coalition.  Its members' map
+  // polygons and populations are merged, so allied territory creates extra
+  // fronts and allies can be conquered/defended instead of being a UI bonus.
+  const selectedPlayer = S.pCode, selectedEnemy = S.eCode;
+  const pMembers = selectionMembers(selectedPlayer);
+  const eMembers = selectionMembers(selectedEnemy);
+  const pAllies = strategicAllies(selectedPlayer, new Set([...pMembers, ...eMembers]), 1);
+  const eAllies = strategicAllies(selectedEnemy, new Set([...pMembers, ...eMembers, ...pAllies]), 2);
+  S.pCode = createFaction(selectedPlayer, 'player', pAllies);
+  S.eCode = createFaction(selectedEnemy, 'enemy', eAllies);
+  const pcInit = S.countries[S.pCode], ecInit = S.countries[S.eCode];
+  pcInit.troops = Math.floor(pcInit.max * C.START_PCT);
+  ecInit.troops = Math.floor(ecInit.max * C.START_PCT);
+  S.selections = { player:selectedPlayer, enemy:selectedEnemy };
 
   const pc = S.countries[S.pCode], ec = S.countries[S.eCode];
 
@@ -884,6 +984,8 @@ function startGame() {
   $('eico').src = ec.flagUrl;
   $('pmax').textContent = `/ ${fmt(pc.max)} MAX`;
   $('rlbl').textContent = `REGEN: +${fmt(Math.floor(pc.max * C.REGEN_RATE))}/s`;
+  const allies = pc.allies.length ? pc.allies.map(k => S.countries[k]?.name).filter(Boolean).join(', ') : 'none';
+  $('allylbl').textContent = `ALLIES: ${allies.toUpperCase()}`;
 
   S.disp.pTroops = pc.troops;
   S.disp.pCas = 0; S.disp.eCas = 0;
@@ -1486,12 +1588,35 @@ function maybeStartAIAttack(){
   const fronts = frontierCellsOf('enemy');
   if (!fronts.length) return;
 
-  const chance = clamp(C.AI_ATTACK_CHANCE, 0, 0.9);
+  // Strategic AI: measure readiness, territory, and front density before it
+  // spends a force.  A country fighting a long front with a depleted army
+  // will preserve its line; one with a local advantage looks for a weak
+  // sector.  This replaces the old calendar-driven random lunge.
+  const pHeld = pc.cellsOrigTotal ? pc.cellsHeld / pc.cellsOrigTotal : 1;
+  const eHeld = ec.cellsOrigTotal ? ec.cellsHeld / ec.cellsOrigTotal : 1;
+  const eReadiness = ec.troops / Math.max(1, ec.max);
+  const pReadiness = pc.troops / Math.max(1, pc.max);
+  const frontRatio = (ec.troops / Math.max(1, fronts.length)) /
+    (pc.troops / Math.max(1, frontierCellsOf('player').length) + 1);
+  const attackingIntoOrder = !!S.attackOrder;
+  // A badly beaten AI does not throw reserves into an attack merely because
+  // it still has a few troops; it retreats/holds until it has a chance.
+  if (eReadiness < 0.12 || eHeld < 0.28 || (frontRatio < 0.48 && !attackingIntoOrder)) return;
+  const initiative = clamp((frontRatio - 0.55) * 0.34 + (eReadiness - pReadiness) * 0.22 + (pHeld - eHeld) * 0.12, 0, 0.42);
+  const chance = clamp(0.025 + initiative + (attackingIntoOrder ? 0.08 : 0), 0, 0.60);
   if (Math.random() > chance) return;
 
-  const focusCell = fronts[Math.floor(Math.random() * fronts.length)];
-  const pct = C.AI_ATTACK_MIN_COMMIT_PCT +
-              Math.random() * (C.AI_ATTACK_MAX_COMMIT_PCT - C.AI_ATTACK_MIN_COMMIT_PCT);
+  // Prefer sectors with several exposed enemy cells and avoid blindly
+  // attacking the densest opposing concentration.
+  const scored = fronts.map(cell => {
+    const targets = cell.neighbors.filter(n => n.owner === 'player');
+    const pressure = targets.reduce((n,t) => n + t.neighbors.filter(x => x.owner === 'player').length, 0);
+    const distancePenalty = S.attackOrder ? Math.hypot(cell.c[0]-S.attackOrder.lat, cell.c[1]-S.attackOrder.lng) * 0.22 : 0;
+    return { cell, score:pressure - distancePenalty + Math.random()*0.35 };
+  }).sort((a,b) => b.score-a.score);
+  const focusCell = scored[0].cell;
+  const pct = clamp(0.12 + initiative * 0.65 + (attackingIntoOrder ? 0.08 : 0),
+                    C.AI_ATTACK_MIN_COMMIT_PCT, C.AI_ATTACK_MAX_COMMIT_PCT + 0.18);
   const commit = Math.max(500, Math.floor(ec.troops * pct));
   ec.troops -= commit;
 
@@ -1650,11 +1775,19 @@ function runPlayerPush({ attackerCountry, defenderCountry, frontiers, changed })
   const intensityFrac  = clamp(order.intensityFrac ?? 0.5, 0.01, 1);
   const intensityScale = 0.10 + 0.90 * intensityFrac; // [0.1, 1.0]
 
+  // An objective may be deep in enemy territory.  Compare every frontier
+  // sector to the *closest* approach rather than treating the raw geographic
+  // distance as a penalty; otherwise a click beyond the first cell creates
+  // zero pressure and giant armies appear unable to advance.
+  let closestFrontDistance = Infinity;
+  for (const fc of frontiers) closestFrontDistance = Math.min(closestFrontDistance,
+    Math.hypot(fc.c[0] - focus[0], fc.c[1] - focus[1]));
+
   const candidates = [];
   for (const fc of frontiers){
     const dx = fc.c[0] - focus[0], dy = fc.c[1] - focus[1];
     const d  = Math.sqrt(dx*dx + dy*dy);
-    const dWeight = 1.0 + C.FOCUS_BOOST * Math.exp(-d / C.FOCUS_DECAY);
+    const dWeight = 1.0 + C.FOCUS_BOOST * Math.exp(-(d - closestFrontDistance) / C.FOCUS_DECAY);
 
     // Frontier cells very far from the focus barely push at all —
     // your order really does concentrate the attack where you clicked.
