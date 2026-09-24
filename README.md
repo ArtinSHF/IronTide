@@ -4,7 +4,7 @@
 
 ---
 
-IronTide is a browser-based real-time war strategy game played on an interactive satellite world map. Pick any two neighbouring countries from the full world atlas, deploy your forces, and fight for total territorial control — all in a single HTML file.
+IronTide is a browser-based real-time war strategy game played on an interactive satellite world map. Build your own alliances, choose one or more enemies from the full world atlas, deploy your forces, and fight for total territorial control — all in a single HTML file.
 
 The project was built as a personal experiment to learn real-time simulation architecture, geographic rendering, AI opponent design, and complex game-state management inside a zero-dependency single-file web app.
 
@@ -31,31 +31,34 @@ Troop sizes are seeded from real-world population figures, so picking a superpow
 ### World Map & Territory System
 
 * **Full World Atlas:** Every country in the world is selectable, loaded from live TopoJSON + world-countries data.
-* **Land Border Enforcement:** The enemy selector only shows countries that share a real land border with your nation — no island-hopping.
-* **Cell Grid Engine:** Both countries are carved into ~7,000 invisible square cells. Each cell tracks its owner, its neighbours, and whether it sits on the active front line.
+* **Player-Controlled Diplomacy:** Pick zero, one, or several allies — then choose one or more enemy countries. Alliances do not need to make geopolitical sense. That's between you and history. 😂
+* **Coalition Territory:** Allied and enemy countries merge their territory, manpower and fronts into real fighting coalitions instead of acting as a cosmetic troop bonus.
+* **Historical Empire Starts:** Play as the Roman, Ottoman, British, Soviet or Mongol Empire. Their modern member territories become one playable entity on the map.
+* **Cell Grid Engine:** Every selected coalition territory is carved into invisible square cells. Each cell tracks its owner, its neighbours, and whether it sits on an active front line.
+* **Anti-Meridian-Safe Geography:** Date-line-spanning geometry is simulated in a continuous coordinate space and split safely for rendering, so Russia behaves like a normal country instead of drawing a front across the planet.
 * **Live Front Line Rendering:** Border cells are outlined in a warm yellow highlight — interior territory has no borders, so the coloured mass looks smooth and organic.
 * **Satellite Map Base:** ArcGIS World Imagery tiles provide a realistic satellite background at all zoom levels.
 
 ### Combat & Order System
 
 * **Order-Driven Combat:** Nothing happens automatically on your side — you issue explicit orders.
-  * **Click enemy territory → Attack Order:** Commits a chosen percentage of your troops as a focused offensive push toward that point on the map. The front line pressure concentrates around your target.
+  * **Click enemy territory → Attack Order:** Commits a chosen percentage of your troops as a focused offensive push toward that point on the map. Deep objectives follow the nearest viable approach sector instead of stalling at the first border cell.
   * **Click your own territory → Move Order:** Redeploys troops toward that point — use it to retreat, regroup, or shift reserves before launching an attack. Pulling troops off the border weakens it for real.
 * **Troop Commit Slider:** A 1–99% slider lets you choose exactly how much of your force to commit before confirming any order.
 * **Stand Down Command:** Cancel an active order at any time to halt the advance or redeployment.
 
 ### Enemy AI
 
-* **Autonomous AI Offensives:** The enemy periodically decides to launch attacks on its own, independent of anything the player does.
+* **Strategic AI Offensives:** The enemy weighs readiness, territory held, force density across the front, your active offensive and exposed sectors before committing to an attack.
 * **Auto-Defend on AI Attack:** While the enemy is pressing, your troops near the front automatically defend and reclaim lost ground — but will never automatically invade. Only your orders can push into enemy territory.
 * **AI Grace Period:** A brief grace period at game start before the AI is allowed to roll for its first attack, giving you time to orient.
 * **Retreat System:** Both the player and the AI can fall back to consolidate their front line.
 
 ### Troop & Simulation System
 
-* **Population-Scaled Armies:** Max troop counts are derived from real 2023 population data (25% of population, capped at 80 million). Small countries genuinely have smaller armies.
-* **Proportional Casualty Scaling:** Losses are calculated as a fraction of each side's maximum army, so a small nation and a superpower bleed at the same *relative* rate — preventing small armies from dying in minutes.
-* **Continuous Troop Regeneration:** Both sides slowly rebuild troops over time, scaled by how much of their original territory they still hold.
+* **Population-Scaled Armies:** Max troop counts are derived from real 2023 population data (3.5% of population, capped at 35 million). Small countries genuinely have smaller armies; superpowers still feel like superpowers.
+* **Meaningful Casualties:** Losses are proportional to force scale, and combat effectiveness falls as formations are depleted. A battered remnant has less cohesion and cannot fight like a fresh army.
+* **Slow, Territory-Scaled Replacements:** Both sides rebuild slowly based on how much original territory they still hold. Reinforcements cannot instantly erase a disastrous battle.
 * **Real-Time Virtual Clock:** The simulation runs on an internal clock that drives combat ticks, regen ticks, AI rolls, and the in-game date display simultaneously.
 * **Speed Controls:** Step through the war at 1×, 2× or 3× real-time speed — everything in the simulation genuinely runs faster, not just the date counter.
 
@@ -132,13 +135,14 @@ irontide/
 
 ## 🎮 How to Play
 
-1. **Pick your nation** from the full world country list.
-2. **Pick an enemy** — only countries that share a real land border with you will appear.
-3. **Click Deploy Forces** to start the war.
-4. **Click enemy territory** to issue an attack order. Use the slider to commit 1–99% of your troops and confirm.
-5. **Click your own territory** to muster and reposition your forces.
-6. **Watch the front line.** The yellow border shows where fighting is happening.
-7. **Overrun the enemy** before they overrun you. First side to lose all cells loses the war.
+1. **Pick your nation** from the full world country list — or choose a historical empire.
+2. **Pick allies** if you want them. Leave the list empty to fight alone.
+3. **Pick one or more enemy nations.** They can be neighbours, distant rivals, or an objectively terrible idea.
+4. **Click Deploy Forces** to start the war.
+5. **Click enemy territory** to issue an attack order. Use the slider to commit 1–99% of your troops and confirm.
+6. **Click your own territory** to muster and reposition your forces.
+7. **Watch the front line.** The yellow border shows where fighting is happening.
+8. **Overrun the enemy coalition** before it overruns yours. First side to lose all cells loses the war.
 
 ---
 
@@ -146,7 +150,7 @@ irontide/
 
 This is an actively maintained experimental project.
 
-Updates are focused on expanding the AI behaviour, adding multi-front conflict support, improving troop mechanics, and refining the visual rendering of large-scale territorial shifts.
+Updates are focused on expanding the AI behaviour, refining multi-front coalition conflict, improving troop mechanics, and polishing large-scale territorial rendering.
 
 ---
 

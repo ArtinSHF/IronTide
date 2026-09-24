@@ -250,11 +250,16 @@ body{background:#060606;color:#ddd;font-family:'Courier New',monospace}
         <select id="psel"><option value="">— SELECT —</option></select>
       </div>
       <div class="sgrp">
-        <span class="slbl">ENEMY NATION</span>
-        <select id="esel" disabled><option value="">— SELECT YOUR NATION FIRST —</option></select>
-        <div class="snote" id="bnote">Enemy must share a land border</div>
+        <span class="slbl">YOUR ALLIES — OPTIONAL</span>
+        <select id="allysel" multiple size="4" disabled></select>
+        <div class="snote">Choose none, one, or a completely cursed alliance. Hold Ctrl / ⌘ for multiple.</div>
       </div>
-      <div class="snote" id="allianceNote">Coalitions are formed from nearby countries at deployment. Allies contribute troops, territory and fronts.</div>
+      <div class="sgrp">
+        <span class="slbl">ENEMY NATIONS</span>
+        <select id="esel" multiple size="5" disabled><option value="">— SELECT YOUR NATION FIRST —</option></select>
+        <div class="snote" id="bnote">Choose one or more countries to fight. Geography is your problem now. 😂</div>
+      </div>
+      <div class="snote" id="allianceNote">Allies and enemies contribute their own territory, manpower and active fronts.</div>
       <button id="sbtn" disabled onclick="startGame()">▶ DEPLOY FORCES</button>
     </div>
   </div>
@@ -674,6 +679,22 @@ function combinedBBox(featA, featB){
   return [Math.min(a1,b1), Math.min(a2,b2), Math.max(a3,b3), Math.max(a4,b4)];
 }
 
+// Keep simulation coordinates continuous across the anti-meridian, but never
+// give Leaflet a polygon whose edge runs from +180° to +181° (Leaflet wraps
+// that as a line across the whole world).  Split only the crossing column;
+// every other cell is simply normalised back into the display range.
+function displayPolysForCell(x0, y0, dx, dy){
+  const rect = (left, right) => [[
+    [y0, left], [y0, right], [y0 + dy, right], [y0 + dy, left]
+  ]];
+  if (x0 < 180 && x0 + dx > 180){
+    return rect(x0, 180).concat(rect(-180, x0 + dx - 360));
+  }
+  const left = x0 > 180 ? x0 - 360 : x0;
+  const right = x0 + dx > 180 ? x0 + dx - 360 : x0 + dx;
+  return rect(left, right);
+}
+
 // ── DATA LOADING ──────────────────────────────────────────────────
 async function boot() {
   const msg = $('lmsg'), bar = $('lbar');
@@ -751,7 +772,13 @@ function fillMenu() {
     empireGroup.appendChild(o);
   });
   ps.appendChild(empireGroup);
-  ps.onchange = () => { S.pCode = ps.value || null; rebuildEnemy(); };
+  ps.onchange = () => {
+    S.pCode = ps.value || null;
+    // A different leader means a fresh diplomatic setup, not stale allies
+    // silently carried over from the country chosen a moment ago.
+    $('allysel').innerHTML = ''; $('esel').innerHTML = '';
+    rebuildEnemy();
+  };
 }
 
 function selectionMembers(code){
@@ -765,25 +792,38 @@ function selectionBorders(code){
 }
 
 function rebuildEnemy() {
-  const es = $('esel'), note = $('bnote');
-  es.innerHTML = '<option value="">— SELECT —</option>';
-  es.disabled = true; S.eCode = null; $('sbtn').disabled = true;
+  const es = $('esel'), allies = $('allysel'), note = $('bnote');
+  const selectedAllies = new Set([...allies.selectedOptions].map(o => o.value));
+  let selectedEnemies = new Set([...es.selectedOptions].map(o => o.value));
+  es.innerHTML = ''; allies.innerHTML = '';
+  es.disabled = true; allies.disabled = true; S.eCode = null; S.eCodes = []; $('sbtn').disabled = true;
   if (!S.pCode) return;
-  const borders = selectionBorders(S.pCode);
-  if (!borders.length) {
-    note.textContent = '⚠ No land borders — pick another';
-    note.style.color = '#c92020'; return;
-  }
-  note.textContent = `${borders.length} countries share a land border`;
-  note.style.color = '';
-  es.disabled = false;
-  borders.map(k => ({ k, name: S.countries[k].name }))
-    .sort((a, b) => a.name.localeCompare(b.name))
-    .forEach(({ k, name }) => {
-      const o = document.createElement('option');
-      o.value = k; o.textContent = name; es.appendChild(o);
+  const own = new Set(selectionMembers(S.pCode));
+  const options = Object.entries(S.countries)
+    .filter(([k,c]) => !k.startsWith('__') && !own.has(k) && c.feat)
+    .map(([k,c]) => ({ k, name:c.name }))
+    .sort((a,b) => a.name.localeCompare(b.name));
+  options.forEach(({k,name}) => {
+    const o = document.createElement('option'); o.value=k; o.textContent=name;
+    o.selected=selectedAllies.has(k); allies.appendChild(o);
+  });
+  const redrawEnemies = () => {
+    const pickedAllies = new Set([...allies.selectedOptions].map(o => o.value));
+    es.innerHTML = '';
+    options.filter(o => !pickedAllies.has(o.k)).forEach(({k,name}) => {
+      const o = document.createElement('option'); o.value=k; o.textContent=name;
+      o.selected=selectedEnemies.has(k); es.appendChild(o);
     });
-  es.onchange = () => { S.eCode = $('esel').value || null; $('sbtn').disabled = !S.eCode; };
+    S.eCodes = [...es.selectedOptions].map(o => o.value);
+    S.eCode = S.eCodes[0] || null;
+    $('sbtn').disabled = !S.eCode;
+  };
+  note.textContent = 'Choose one or more enemies — land borders are no longer a diplomatic permission slip.';
+  note.style.color = '';
+  es.disabled = false; allies.disabled = false;
+  redrawEnemies();
+  allies.onchange = redrawEnemies;
+  es.onchange = () => { S.eCodes = [...es.selectedOptions].map(o => o.value); selectedEnemies = new Set(S.eCodes); S.eCode = S.eCodes[0] || null; $('sbtn').disabled = !S.eCode; };
 }
 
 // ── CELL GRID GENERATION ─────────────────────────────────────────
@@ -859,16 +899,17 @@ function buildCellGrid(){
     const [ix, iy] = key.split(',').map(Number);
     const x0 = minX + ix * dx, y0 = minY + iy * dy;
     const cx = x0 + dx * 0.5, cy = y0 + dy * 0.5;
-    const origCountry = owner === 'player' ? S.pCode : S.eCode;
-    const cell = {
+      const origCountry = owner === 'player' ? S.pCode : S.eCode;
+      const cell = {
       ix, iy,
       c:   [cy, cx],
-      poly:[
+        poly:[
         [y0,        x0],
         [y0,        x0 + dx],
         [y0 + dy,   x0 + dx],
         [y0 + dy,   x0],
-      ],
+        ],
+        displayPolys: displayPolysForCell(x0, y0, dx, dy),
       owner,
       origCountry,
       neighbors: [],
@@ -927,18 +968,6 @@ function mergeFeatures(members){
   return { type:'Feature', _wrapDateline:wraps, properties:{}, geometry:{ type:'MultiPolygon', coordinates:polygons } };
 }
 
-function strategicAllies(anchor, forbidden, count){
-  const blocked = new Set(forbidden);
-  const candidates = selectionBorders(anchor)
-    .filter(c => !blocked.has(c))
-    .map(c => S.countries[c])
-    .filter(Boolean)
-    // Nearby states with real capacity are useful allies; this is intentional
-    // coalition logic rather than a random "extra country" roll.
-    .sort((a,b) => b.max - a.max);
-  return candidates.slice(0, count).map(c => Object.keys(S.countries).find(k => S.countries[k] === c));
-}
-
 function createFaction(selection, side, allies){
   const primaryMembers = selectionMembers(selection).filter(c => S.countries[c]);
   const members = [...new Set(primaryMembers.concat(allies || []))];
@@ -967,16 +996,21 @@ function startGame() {
   // polygons and populations are merged, so allied territory creates extra
   // fronts and allies can be conquered/defended instead of being a UI bonus.
   const selectedPlayer = S.pCode, selectedEnemy = S.eCode;
-  const pMembers = selectionMembers(selectedPlayer);
-  const eMembers = selectionMembers(selectedEnemy);
-  const pAllies = strategicAllies(selectedPlayer, new Set([...pMembers, ...eMembers]), 1);
-  const eAllies = strategicAllies(selectedEnemy, new Set([...pMembers, ...eMembers, ...pAllies]), 2);
+  // Player diplomacy is explicit.  Nothing is auto-added: choosing no ally
+  // means fighting alone; every selected enemy becomes part of the opposing
+  // coalition, including non-neighbours and disconnected overseas fronts.
+  const pAllies = [...new Set(S.playerAllies || [...$('allysel').selectedOptions].map(o => o.value))]
+    .filter(c => c !== selectedPlayer && S.countries[c]);
+  const selectedEnemies = [...new Set(S.eCodes || [selectedEnemy])]
+    .filter(c => c !== selectedPlayer && !pAllies.includes(c) && S.countries[c]);
+  if (!selectedEnemies.length) return;
+  const enemyLead = selectedEnemies[0];
   S.pCode = createFaction(selectedPlayer, 'player', pAllies);
-  S.eCode = createFaction(selectedEnemy, 'enemy', eAllies);
+  S.eCode = createFaction(enemyLead, 'enemy', selectedEnemies.slice(1));
   const pcInit = S.countries[S.pCode], ecInit = S.countries[S.eCode];
   pcInit.troops = Math.floor(pcInit.max * C.START_PCT);
   ecInit.troops = Math.floor(ecInit.max * C.START_PCT);
-  S.selections = { player:selectedPlayer, enemy:selectedEnemy };
+  S.selections = { player:selectedPlayer, enemy:selectedEnemies };
 
   const pc = S.countries[S.pCode], ec = S.countries[S.eCode];
 
@@ -1030,6 +1064,10 @@ function initMap() {
   // Light country outlines (cosmetic).
   for (const [k, c] of Object.entries(S.countries)) {
     if (c.ctrl === 'neutral') continue;
+    // Leaflet's GeoJSON outline renderer joins an anti-meridian ring through
+    // the entire map.  The cell renderer below already draws that territory
+    // safely as split pieces, so omit this cosmetic layer for any such shape.
+    if (c.feat._wrapDateline) continue;
     const lyr = L.geoJSON(c.feat, {
       style: { fillColor:'#000', fillOpacity:0, color:'#fff', weight:1.4, opacity:.55 },
       interactive: false,
@@ -1069,11 +1107,11 @@ function renderCells(){
   if (!S.cellLayer){
     S.cellLayer = L.layerGroup().addTo(map);
     for (const cell of S.cells){
-      cell.layer = L.polygon(cell.poly, styleForCell(cell)).addTo(S.cellLayer);
+      cell.layers = cell.displayPolys.map(poly => L.polygon(poly, styleForCell(cell)).addTo(S.cellLayer));
     }
   } else {
     for (const cell of S.cells){
-      cell.layer.setStyle(styleForCell(cell));
+      for (const layer of (cell.layers || [])) layer.setStyle(styleForCell(cell));
     }
   }
 }
@@ -1088,7 +1126,7 @@ function refreshCells(cells){
   const apply = (cell) => {
     if (!cell || seen.has(cell)) return;
     seen.add(cell);
-    cell.layer?.setStyle(styleForCell(cell));
+    for (const layer of (cell.layers || [])) layer.setStyle(styleForCell(cell));
   };
   for (const cell of cells){
     apply(cell);
@@ -1596,8 +1634,8 @@ function maybeStartAIAttack(){
   const eHeld = ec.cellsOrigTotal ? ec.cellsHeld / ec.cellsOrigTotal : 1;
   const eReadiness = ec.troops / Math.max(1, ec.max);
   const pReadiness = pc.troops / Math.max(1, pc.max);
-  const frontRatio = (ec.troops / Math.max(1, fronts.length)) /
-    (pc.troops / Math.max(1, frontierCellsOf('player').length) + 1);
+  const frontRatio = (battleStrength(ec) / Math.max(1, fronts.length)) /
+    (battleStrength(pc, S.attackOrder?.commit || 0) / Math.max(1, frontierCellsOf('player').length) + 1);
   const attackingIntoOrder = !!S.attackOrder;
   // A badly beaten AI does not throw reserves into an attack merely because
   // it still has a few troops; it retreats/holds until it has a chance.
@@ -1729,6 +1767,15 @@ function combatRatioWeight(ratio){
   return C.COMBAT_RATIO_MIN +
          (C.COMBAT_RATIO_MAX - C.COMBAT_RATIO_MIN) * Math.pow(r, C.COMBAT_RATIO_POW);
 }
+// Survivors are not automatically a healthy field army.  As formations lose
+// officers, equipment and cohesion, each remaining soldier contributes less
+// to an offensive/defence.  The floor prevents a wounded remnant from becoming
+// literally inert, while the curve makes catastrophic losses unmistakable.
+function battleStrength(country, committed = 0){
+  const force = Math.max(0, country.troops + committed);
+  const readiness = clamp(force / Math.max(1, country.max), 0, 1);
+  return force * (0.15 + 0.85 * Math.sqrt(readiness));
+}
 // A weak attacker doesn't just get worse odds per cell — it also gets
 // fewer attempts per tick, so its progress feels rare/occasional
 // rather than a slow-but-steady grind. A dominant attacker (weight at
@@ -1763,9 +1810,10 @@ function runPlayerPush({ attackerCountry, defenderCountry, frontiers, changed })
   // troops ARE fighting, tracked separately from the standing pool.
   // Without this fix a 50 % commit halved the apparent army size and
   // badly deflated the troop-ratio advantage.
-  const effectiveAttacker = attackerCountry.troops + (order.commit || 0);
+  const effectiveAttacker = battleStrength(attackerCountry, order.commit || 0);
+  const effectiveDefender = battleStrength(defenderCountry);
   const ratio = effectiveAttacker /
-                (effectiveAttacker + defenderCountry.troops + 1);
+                (effectiveAttacker + effectiveDefender + 1);
   const ratioWeight = combatRatioWeight(ratio);
 
   // ── FIX 4: Make the slider genuinely control attack power.
@@ -1850,10 +1898,11 @@ function runPlayerPush({ attackerCountry, defenderCountry, frontiers, changed })
 function runEnemyCounter({ attackerCountry, defenderCountry, frontiers, changed }){
   // Count the player's full effective force (troops + commit pool) so a
   // massively outnumbered enemy can't casually counter-attack.
-  const effectiveDefender = defenderCountry.troops +
-                            (S.attackOrder ? (S.attackOrder.commit || 0) : 0);
-  const ratio = attackerCountry.troops /
-                (attackerCountry.troops + effectiveDefender + 1);
+  const effectiveDefender = battleStrength(defenderCountry,
+                            S.attackOrder ? (S.attackOrder.commit || 0) : 0);
+  const effectiveAttacker = battleStrength(attackerCountry);
+  const ratio = effectiveAttacker /
+                (effectiveAttacker + effectiveDefender + 1);
   // Automatic counters are slightly less efficient than a deliberate
   // order, but the troop ratio itself now does almost all of the
   // work — a badly outnumbered defender should barely be able to
@@ -1943,9 +1992,10 @@ function runEnemyPush({ attackerCountry, defenderCountry, frontiers, changed }){
 
   const focus = [order.lat, order.lng];
   // Include enemy commit pool so the AI's committed force counts correctly.
-  const effectiveEnemyAttacker = attackerCountry.troops + (order.commit || 0);
+  const effectiveEnemyAttacker = battleStrength(attackerCountry, order.commit || 0);
+  const effectivePlayerDefender = battleStrength(defenderCountry);
   const ratio = effectiveEnemyAttacker /
-                (effectiveEnemyAttacker + defenderCountry.troops + 1);
+                (effectiveEnemyAttacker + effectivePlayerDefender + 1);
   const ratioWeight = combatRatioWeight(ratio);
 
   const candidates = [];
@@ -2000,7 +2050,9 @@ function runEnemyPush({ attackerCountry, defenderCountry, frontiers, changed }){
 // the enemy's own native territory on their own; that requires an
 // explicit attack order from the player.
 function runPlayerAutoDefense({ ec, pc, frontiers, changed }){
-  const ratio = pc.troops / (pc.troops + ec.troops + 1);
+  const playerStrength = battleStrength(pc);
+  const enemyStrength = battleStrength(ec, S.enemyAttackOrder?.commit || 0);
+  const ratio = playerStrength / (playerStrength + enemyStrength + 1);
   // Automatic defense is slightly less efficient than a deliberate
   // order, but the troop ratio itself now does almost all of the work.
   const ratioWeight = combatRatioWeight(ratio) * 0.8;
