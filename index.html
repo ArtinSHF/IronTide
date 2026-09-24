@@ -16,7 +16,7 @@ body{background:#060606;color:#ddd;font-family:'Courier New',monospace}
   display:flex;align-items:center;justify-content:center;
   background:radial-gradient(ellipse at 50% 38%,#170404 0%,#060606 68%)
 }
-.mwrap{text-align:center;width:90%;max-width:460px}
+.mwrap{text-align:center;width:min(92%,780px)}
 .gtitle{
   font-size:clamp(52px,12vw,92px);font-weight:900;
   letter-spacing:.12em;color:#c92020;
@@ -38,6 +38,16 @@ body{background:#060606;color:#ddd;font-family:'Courier New',monospace}
 }
 .sgrp select:focus{border-color:#c92020}
 .snote{font-size:10px;color:#999;margin-top:5px;letter-spacing:.08em}
+.diplo{display:none;text-align:left;border:1px solid #2a2a2a;background:rgba(10,10,10,.72);padding:14px;margin:0 0 18px;box-shadow:0 0 28px rgba(0,0,0,.35)}
+.diploTop{display:flex;gap:10px;align-items:center;margin-bottom:11px}
+.diploTitle{font-size:10px;letter-spacing:.24em;color:#ddd;white-space:nowrap}.diploTitle b{color:#c92020}
+#dipsearch{flex:1;min-width:0;background:#080808;border:1px solid #333;color:#ddd;padding:9px 10px;font:11px 'Courier New',monospace;outline:none}
+#dipsearch:focus{border-color:#c92020}
+.diploGrid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.diploCol{min-width:0;border:1px solid #262626;background:#080808}
+.diploHead{display:flex;justify-content:space-between;padding:8px 10px;border-bottom:1px solid #262626;font-size:10px;letter-spacing:.16em}.diploCol.allies .diploHead{color:#76a9ff}.diploCol.enemies .diploHead{color:#ff6565}.diploCount{color:#777}
+.countryList{height:176px;overflow-y:auto;padding:5px}.countryCard{width:100%;display:flex;align-items:center;gap:8px;border:1px solid transparent;background:transparent;color:#aaa;padding:7px 8px;margin-bottom:3px;text-align:left;font:11px 'Courier New',monospace;cursor:pointer;transition:.14s}.countryCard:hover{background:#151515;color:#fff;border-color:#383838}.countryCard.selected.ally{background:#10213d;border-color:#3767a8;color:#dbe9ff}.countryCard.selected.enemy{background:#351313;border-color:#a33c3c;color:#ffe0e0}.countryCard img{width:20px;height:13px;object-fit:cover;border:1px solid #444}.countryCard .tick{margin-left:auto;color:#fff;font-weight:bold}.diploEmpty{padding:20px 8px;text-align:center;color:#555;font-size:10px}.diploSummary{margin-top:10px;color:#999;font-size:10px;line-height:1.55}.diploSummary b{color:#ddd}.diploSummary .allyText{color:#8bb6ff}.diploSummary .enemyText{color:#ff8585}
+@media(max-width:620px){.diploGrid{grid-template-columns:1fr}.countryList{height:122px}.gsub{margin-bottom:24px}}
 #sbtn{
   width:100%;padding:15px;margin-top:6px;background:#c92020;
   border:none;color:#fff;font-family:'Courier New',monospace;
@@ -249,17 +259,14 @@ body{background:#060606;color:#ddd;font-family:'Courier New',monospace}
         <span class="slbl">YOUR NATION</span>
         <select id="psel"><option value="">— SELECT —</option></select>
       </div>
-      <div class="sgrp">
-        <span class="slbl">YOUR ALLIES — OPTIONAL</span>
-        <select id="allysel" multiple size="4" disabled></select>
-        <div class="snote">Choose none, one, or a completely cursed alliance. Hold Ctrl / ⌘ for multiple.</div>
+      <div class="diplo" id="diplo">
+        <div class="diploTop"><span class="diploTitle">BUILD YOUR <b>WAR PLAN</b></span><input id="dipsearch" placeholder="Search countries…" autocomplete="off"></div>
+        <div class="diploGrid">
+          <div class="diploCol allies"><div class="diploHead"><span>🤝 ALLIES</span><span class="diploCount" id="allyCount">0 SELECTED</span></div><div class="countryList" id="allyList"></div></div>
+          <div class="diploCol enemies"><div class="diploHead"><span>⚔ ENEMIES</span><span class="diploCount" id="enemyCount">0 SELECTED</span></div><div class="countryList" id="enemyList"></div></div>
+        </div>
+        <div class="diploSummary" id="diploSummary">Choose allies if you want them. Choose at least one enemy to deploy.</div>
       </div>
-      <div class="sgrp">
-        <span class="slbl">ENEMY NATIONS</span>
-        <select id="esel" multiple size="5" disabled><option value="">— SELECT YOUR NATION FIRST —</option></select>
-        <div class="snote" id="bnote">Choose one or more countries to fight. Geography is your problem now. 😂</div>
-      </div>
-      <div class="snote" id="allianceNote">Allies and enemies contribute their own territory, manpower and active fronts.</div>
       <button id="sbtn" disabled onclick="startGame()">▶ DEPLOY FORCES</button>
     </div>
   </div>
@@ -621,6 +628,11 @@ const $    = id => document.getElementById(id);
 const fmt  = n  => Math.round(Math.max(0, n)).toLocaleString();
 const lerp = (a, b, t) => a + (b - a) * t;
 const clamp= (v, a, b) => v < a ? a : v > b ? b : v;
+// Simulation may use an unwrapped longitude interval; Leaflet and click input
+// always use the normal -180..180 world.  Keep that conversion at the map
+// boundary rather than corrupting grid adjacency near the date line.
+const mapLng = lng => ((lng + 180) % 360 + 360) % 360 - 180;
+const lngDelta = (a, b) => mapLng(a - b);
 
 // ── POINT-IN-POLYGON (ray casting, supports MultiPolygon) ────────
 function pointInRing(pt, ring){
@@ -774,9 +786,7 @@ function fillMenu() {
   ps.appendChild(empireGroup);
   ps.onchange = () => {
     S.pCode = ps.value || null;
-    // A different leader means a fresh diplomatic setup, not stale allies
-    // silently carried over from the country chosen a moment ago.
-    $('allysel').innerHTML = ''; $('esel').innerHTML = '';
+    S.diplomacy = { allies:new Set(), enemies:new Set() };
     rebuildEnemy();
   };
 }
@@ -792,38 +802,52 @@ function selectionBorders(code){
 }
 
 function rebuildEnemy() {
-  const es = $('esel'), allies = $('allysel'), note = $('bnote');
-  const selectedAllies = new Set([...allies.selectedOptions].map(o => o.value));
-  let selectedEnemies = new Set([...es.selectedOptions].map(o => o.value));
-  es.innerHTML = ''; allies.innerHTML = '';
-  es.disabled = true; allies.disabled = true; S.eCode = null; S.eCodes = []; $('sbtn').disabled = true;
+  const board = $('diplo');
+  board.style.display = S.pCode ? 'block' : 'none';
   if (!S.pCode) return;
+  if (!S.diplomacy) S.diplomacy = { allies:new Set(), enemies:new Set() };
   const own = new Set(selectionMembers(S.pCode));
   const options = Object.entries(S.countries)
     .filter(([k,c]) => !k.startsWith('__') && !own.has(k) && c.feat)
     .map(([k,c]) => ({ k, name:c.name }))
     .sort((a,b) => a.name.localeCompare(b.name));
-  options.forEach(({k,name}) => {
-    const o = document.createElement('option'); o.value=k; o.textContent=name;
-    o.selected=selectedAllies.has(k); allies.appendChild(o);
-  });
-  const redrawEnemies = () => {
-    const pickedAllies = new Set([...allies.selectedOptions].map(o => o.value));
-    es.innerHTML = '';
-    options.filter(o => !pickedAllies.has(o.k)).forEach(({k,name}) => {
-      const o = document.createElement('option'); o.value=k; o.textContent=name;
-      o.selected=selectedEnemies.has(k); es.appendChild(o);
-    });
-    S.eCodes = [...es.selectedOptions].map(o => o.value);
-    S.eCode = S.eCodes[0] || null;
-    $('sbtn').disabled = !S.eCode;
+  S.diplomacy.options = options;
+  $('dipsearch').value = '';
+  $('dipsearch').oninput = renderDiplomacy;
+  renderDiplomacy();
+}
+
+function toggleDiplomacy(code, side){
+  const d = S.diplomacy;
+  const mine = side === 'ally' ? d.allies : d.enemies;
+  const other = side === 'ally' ? d.enemies : d.allies;
+  if (mine.has(code)) mine.delete(code); else { other.delete(code); mine.add(code); }
+  renderDiplomacy();
+}
+function renderDiplomacy(){
+  const d = S.diplomacy, filter = $('dipsearch').value.trim().toLowerCase();
+  const options = (d.options || []).filter(o => o.name.toLowerCase().includes(filter));
+  const list = (side, id) => {
+    const chosen = side === 'ally' ? d.allies : d.enemies;
+    const other = side === 'ally' ? d.enemies : d.allies;
+    const host = $(id); host.innerHTML = '';
+    const visible = options.filter(o => !other.has(o.k));
+    if (!visible.length){ host.innerHTML = '<div class="diploEmpty">NO COUNTRIES FOUND</div>'; return; }
+    for (const o of visible){
+      const c = S.countries[o.k], active = chosen.has(o.k);
+      const b = document.createElement('button'); b.type='button';
+      b.className = `countryCard ${active ? `selected ${side}` : ''}`;
+      b.innerHTML = `<img src="${c.flagUrl}" alt=""><span>${o.name}</span>${active ? '<span class="tick">✓</span>' : ''}`;
+      b.onclick = () => toggleDiplomacy(o.k, side); host.appendChild(b);
+    }
   };
-  note.textContent = 'Choose one or more enemies — land borders are no longer a diplomatic permission slip.';
-  note.style.color = '';
-  es.disabled = false; allies.disabled = false;
-  redrawEnemies();
-  allies.onchange = redrawEnemies;
-  es.onchange = () => { S.eCodes = [...es.selectedOptions].map(o => o.value); selectedEnemies = new Set(S.eCodes); S.eCode = S.eCodes[0] || null; $('sbtn').disabled = !S.eCode; };
+  list('ally','allyList'); list('enemy','enemyList');
+  $('allyCount').textContent = `${d.allies.size} SELECTED`;
+  $('enemyCount').textContent = `${d.enemies.size} SELECTED`;
+  const names = set => [...set].map(k => S.countries[k]?.name).filter(Boolean).join(', ') || 'none';
+  $('diploSummary').innerHTML = `<b>YOUR SIDE:</b> <span class="allyText">${names(d.allies)}</span><br><b>OPPOSING SIDE:</b> <span class="enemyText">${names(d.enemies)}</span>`;
+  S.eCodes = [...d.enemies]; S.eCode = S.eCodes[0] || null;
+  $('sbtn').disabled = !S.eCode;
 }
 
 // ── CELL GRID GENERATION ─────────────────────────────────────────
@@ -999,7 +1023,7 @@ function startGame() {
   // Player diplomacy is explicit.  Nothing is auto-added: choosing no ally
   // means fighting alone; every selected enemy becomes part of the opposing
   // coalition, including non-neighbours and disconnected overseas fronts.
-  const pAllies = [...new Set(S.playerAllies || [...$('allysel').selectedOptions].map(o => o.value))]
+  const pAllies = [...new Set(S.diplomacy?.allies || [])]
     .filter(c => c !== selectedPlayer && S.countries[c]);
   const selectedEnemies = [...new Set(S.eCodes || [selectedEnemy])]
     .filter(c => c !== selectedPlayer && !pAllies.includes(c) && S.countries[c]);
@@ -1209,13 +1233,13 @@ function confirmAction(){
       // Update intensity to the latest slider position so the player can
       // change attack power mid-battle by issuing a new order.
       S.attackOrder.intensityFrac = pct;
-      if (S.attackOrder.marker) S.attackOrder.marker.setLatLng([S.pending.lat, S.pending.lng]);
+      if (S.attackOrder.marker) S.attackOrder.marker.setLatLng([S.pending.lat, mapLng(S.pending.lng)]);
     } else {
       const icon = L.divIcon({
         className:'', iconAnchor:[0,0],
         html:`<div class="focusring"></div>`
       });
-      const marker = L.marker([S.pending.lat, S.pending.lng],
+      const marker = L.marker([S.pending.lat, mapLng(S.pending.lng)],
                               { icon, zIndexOffset: 950, interactive:false }).addTo(map);
       S.attackOrder = {
         lat: S.pending.lat, lng: S.pending.lng,
@@ -1595,7 +1619,7 @@ function refreshOrderHUD(){
 function nearestAnyCell(latlng){
   let best = null, bd = Infinity;
   for (const cell of S.cells){
-    const dx = cell.c[0] - latlng[0], dy = cell.c[1] - latlng[1];
+    const dx = cell.c[0] - latlng[0], dy = lngDelta(cell.c[1], latlng[1]);
     const d  = dx*dx + dy*dy;
     if (d < bd){ bd = d; best = cell; }
   }
@@ -1662,7 +1686,7 @@ function maybeStartAIAttack(){
     className:'', iconAnchor:[0,0],
     html:`<div class="enemyfocusring"></div>`
   });
-  const marker = L.marker([focusCell.c[0], focusCell.c[1]],
+  const marker = L.marker([focusCell.c[0], mapLng(focusCell.c[1])],
                           { icon, zIndexOffset: 950, interactive:false }).addTo(map);
 
   const duration = C.AI_ATTACK_MIN_DURATION_MS +
@@ -2378,7 +2402,7 @@ function makeFlagMarker(side, lat, lng, scale){
     className: 'flagWrap', iconAnchor: [Math.round(w/2), Math.round(h/2)],
     html: `<img class="fico" style="width:${w}px;height:${h}px;opacity:0" src="${ctry.flagUrl}" alt="">`
   });
-  const marker = L.marker([lat, lng], { icon, zIndexOffset: 700, interactive: false }).addTo(map);
+  const marker = L.marker([lat, mapLng(lng)], { icon, zIndexOffset: 700, interactive: false }).addTo(map);
   // Set initial opacity 0 synchronously above, then bump to full
   // opacity next frame so the browser actually animates the fade-in
   // instead of just appearing at full strength.
@@ -2404,7 +2428,7 @@ function setFlagVisual(entry, lat, lng, scale){
     clearTimeout(entry._moveTimer);
     entry._moveTimer = setTimeout(() => { el.classList.remove('flagMoving'); }, 460);
   }
-  marker.setLatLng([lat, lng]);
+  marker.setLatLng([lat, mapLng(lng)]);
   entry.lat = lat; entry.lng = lng;
 
   const img = el?.querySelector('img');
@@ -2609,10 +2633,10 @@ function drawTroopLabel(side){
       className: '', iconAnchor: [0, 0],
       html: `<div class="tlbl"></div>`,
     });
-    marker = L.marker([lat, lng], { icon, zIndexOffset: 800, interactive: false }).addTo(map);
+    marker = L.marker([lat, mapLng(lng)], { icon, zIndexOffset: 800, interactive: false }).addTo(map);
     S.labelMarkers[side] = marker;
   }
-  marker.setLatLng([lat, lng]);
+  marker.setLatLng([lat, mapLng(lng)]);
   const inner = marker.getElement()?.querySelector('.tlbl');
   if (inner){
     inner.textContent = fmt(display);
