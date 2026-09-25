@@ -523,7 +523,6 @@ const C = {
   FLAG_DIV_LOW:           8_000,  // slightly denser, still capped below
   FLAG_DIV_MID:          70_000,
   FLAG_DIV_HIGH:        320_000,
-  FLAG_INTERIOR_RATIO:     0.20,  // retain national identity behind the front too
   FLAG_BASE_W:                22, // baseline icon size in px (at nominal density)
   FLAG_BASE_H:                15,
   FLAG_MIN_PX:                14,
@@ -643,6 +642,7 @@ const S = {
   // ─ display ─
   flagPools: { player: {}, enemy: {} }, // persistent flag markers, keyed by nation
   labelMarkers: {},
+  frontGroupState: {},  // per-side hysteresis memory for troop-label front grouping
   memberRows: {},
   countryLayers: {},
   frontLineLayer: null,
@@ -1403,6 +1403,7 @@ function startGame() {
   S.gameStartMs = Date.now();
   S.simMs = 0;
   S.aiNextRollAt = C.AI_ATTACK_GRACE_MS;
+  S.frontGroupState = {};
 
   $('menu').style.display = 'none';
   $('game').style.display = 'block';
@@ -2811,23 +2812,17 @@ function computeFlagTargets(side, country){
   }
   const remaining = desired - musterCount;
 
-  let borderCount, interiorCount;
-  if (!fronts.length){
-    borderCount = 0; interiorCount = remaining;
-  } else if (!interiorCells.length){
-    borderCount = remaining; interiorCount = 0;
-  } else {
-    interiorCount = remaining <= 2 ? 0 : Math.max(1, Math.round(remaining * C.FLAG_INTERIOR_RATIO));
-    borderCount = remaining - interiorCount;
-  }
+  // The front is where the war is happening, so it gets first claim on
+  // flags — up to one per front cell (farthest-point sampling spreads
+  // them evenly along the whole line, so a long front doesn't clump).
+  // Only once the front is saturated does the remainder spill inland,
+  // where it spreads out to represent/hold the rest of the territory.
+  const frontCapacity = fronts.length;
+  const borderCount = Math.min(remaining, frontCapacity);
+  const interiorCount = remaining - borderCount;
 
-  // Prioritise the active front, but with breathing room: the front hosts
-  // at most ~1 flag per 2 border cells (farthest-point sampling spreads
-  // them along the whole line). Whatever doesn't fit spills into the
-  // interior — spread across the entire territory instead of piling up.
-  const frontCapacity = fronts.length ? Math.max(1, Math.ceil(fronts.length * 0.5)) : 0;
-  const borderCells = spreadSampleCells(fronts, Math.min(borderCount, frontCapacity));
-  const interiorGoal = Math.min(remaining - borderCells.length, interiorCells.length);
+  const borderCells = spreadSampleCells(fronts, borderCount);
+  const interiorGoal = Math.min(interiorCount, interiorCells.length);
   const interiorPicks = spreadSampleCells(interiorCells, Math.max(0, interiorGoal));
 
   const pts = [];
@@ -3034,6 +3029,25 @@ function facingTilt(bearingDeg, maxTilt){
 // once a side is fully eliminated (no land left at all); a temporarily
 // low standing-troop count never hides it, which is what used to make
 // it flicker in and out.
+// Direction toward the enemy, averaged across every cell in the front
+// group (not just one edge cell). A single cell flipping back and forth
+// right next to an anchor used to swing that anchor's bearing wildly
+// tick to tick; averaging over the whole theatre makes the direction —
+// and therefore the label's lean and preferred position — change only
+// when the front's actual shape changes, not from single-cell noise.
+function groupEnemyDirection(group, side){
+  let dLat=0, dLng=0, cnt=0;
+  for (const c of group){
+    const d=neighborEnemyDirection(c, side);
+    if (d){ dLat+=d.dLat; dLng+=d.dLng; cnt++; }
+  }
+  if (!cnt){
+    let lat=0,lng=0; for (const c of group){ lat+=c.c[0]; lng+=c.c[1]; }
+    lat/=group.length; lng/=group.length;
+    return nearestEnemyDirection(lat,lng,side);
+  }
+  return { dLat:dLat/cnt, dLng:dLng/cnt };
+}
 function frontComponents(side){
   const fronts=frontierCellsOf(side), set=new Set(fronts), seen=new Set(), groups=[];
   for (const start of fronts){
@@ -3053,8 +3067,35 @@ function frontComponents(side){
   // "Material" scales with the theatre: a small battlefield (a few dozen
   // total front cells) still gets its labels, big wars keep the 40-cell cap.
   const materialFloor=Math.min(40, Math.max(4, Math.ceil(total*0.08)));
-  const material=groups.filter(g=>g.length>=materialFloor)
+
+  // Give each front's on/off state memory instead of recomputing it from
+  // a hard threshold every single tick — that's what used to make a
+  // borderline front's number disappear and reappear randomly as it
+  // hovered right at the cutoff. A front we were already showing has to
+  // shrink well below the floor before it's dropped; a front we weren't
+  // showing has to clearly earn its way past the floor before it appears.
+  const prevShown = S.frontGroupState?.[side] || [];
+  const scored = groups.map(g=>{
+    const gSet=new Set(g);
+    let bestOverlap=0;
+    for (const prev of prevShown){
+      let overlap=0;
+      for (const c of prev) if (gSet.has(c)) overlap++;
+      if (overlap>bestOverlap) bestOverlap=overlap;
+    }
+    const wasShown = bestOverlap >= Math.max(1, g.length*0.3);
+    const shown = wasShown ? g.length >= materialFloor*0.6 : g.length >= materialFloor;
+    return { g, shown };
+  });
+  let material = scored.filter(s=>s.shown).map(s=>s.g)
     .sort((a,b)=>b.length-a.length).slice(0,4);
+  if (!material.length && groups.length){
+    // Never go fully silent while a front exists — show the single
+    // biggest one even if it hasn't reached the usual floor yet.
+    material = [groups.slice().sort((a,b)=>b.length-a.length)[0]];
+  }
+  S.frontGroupState = S.frontGroupState || {};
+  S.frontGroupState[side] = material.map(g=>new Set(g));
   material.frontWeight=total;
   return material;
 }
@@ -3064,7 +3105,7 @@ function labelAnchor(side, group, cells){
   lat/=group.length; lng/=group.length;
   let edge=group[0], edgeDist=Infinity;
   for (const c of group){ const d=(c.c[0]-lat)**2+(c.c[1]-lng)**2; if(d<edgeDist){edge=c;edgeDist=d;} }
-  const dir=neighborEnemyDirection(edge,side) || nearestEnemyDirection(edge.c[0],edge.c[1],side) || {dLat:0,dLng:0};
+  const dir=groupEnemyDirection(group,side) || {dLat:0,dLng:0};
   const len=Math.hypot(dir.dLat,dir.dLng)||1;
   const target=[edge.c[0]-(dir.dLat/len)*S.cellSide*2.1, edge.c[1]-(dir.dLng/len)*S.cellSide*2.1];
   let best=edge,bestScore=Infinity;
@@ -3089,7 +3130,7 @@ function drawTroopLabel(side){
     // apportioned by actual exposed frontage, so separate labels add up to
     // that pool instead of each repeating the coalition total.
     const share=allFrontWeight ? total*(group.length/Math.max(1,totalFront)) : total;
-    const dir=neighborEnemyDirection(anchor,side)||nearestEnemyDirection(anchor.c[0],anchor.c[1],side);
+    const dir=groupEnemyDirection(group,side);
     return { group, cell:anchor, display:share, tilt:dir?facingTilt(bearingOf(dir,anchor.c[0]),24):0 };
   });
   const used=new Set();
@@ -3166,10 +3207,48 @@ function surrender(){
   endGame(false, 'surrender');
 }
 
-// 🕊 WHITE PEACE — end the war immediately, no winner, map left exactly as-is.
+// 🕊 WHITE PEACE — a true reset, not "end the war with the current
+// borders." Every cell, both armies, and all casualties are rewound to
+// exactly how they stood the moment the war started, active fronts and
+// orders are cleared, and only then does the game end. The war is treated
+// as though it never happened.
 function whitePeace(){
   if (S.over) return;
+  rewindToWarStart();
   endGame('draw', 'whitepeace');
+}
+
+// Restores S.cells, both armies, and the casualty counters to the
+// game's very first recorded snapshot (t=0, captured in startGame()).
+// Also clears every live order so nothing from the war carries over.
+function rewindToWarStart(){
+  const start = S.replay && S.replay[0];
+  if (!start) return; // peace called before the first snapshot existed — nothing to rewind
+
+  for (let i = 0; i < S.cells.length; i++){
+    S.cells[i].owner = start.owners[i] === 'p' ? 'player' : 'enemy';
+    if (start.formations?.[i]) S.cells[i].flagCountry = start.formations[i];
+  }
+
+  const pc = S.countries[S.pCode], ec = S.countries[S.eCode];
+  if (pc) pc.troops = start.pTroops;
+  if (ec) ec.troops = start.eTroops;
+
+  S.cas.p = 0; S.cas.e = 0;
+  S.disp.pCas = 0; S.disp.eCas = 0;
+  S.disp.pTroops = start.pTroops;
+
+  // Wipe every active order/front — the war never happened, so nothing
+  // it produced should linger.
+  clearAttackOrder(false);
+  clearMoveOrder();
+  clearRetreatOrder();
+  clearEnemyAttackOrder(false);
+  clearEnemyRetreatOrder();
+
+  recountCells();
+  refreshCells(S.cells);
+  renderFlagsAndLabels();
 }
 
 // 🏆 FORCE PEACE — available once the player's side controls ≥95% of the
@@ -3212,7 +3291,7 @@ function endGame(won, reason){
   const reasonStr = {
     overrun:    'Front line collapsed — territory fully occupied',
     surrender:  'You surrendered',
-    whitepeace: 'Nobody won — the war ends with the front line where it stands',
+    whitepeace: 'Nobody won — all territory, armies, and losses were reverted to how they stood before the war',
     forced:     `Forced peace — enemy coalition capitulated (≥${Math.round(C.FORCE_PEACE_TERRITORY * 100)}% occupied)`,
   }[reason] || '';
   const daysElapsed = Math.floor(S.simMs / C.MS_PER_DAY);
@@ -3247,7 +3326,9 @@ function endGame(won, reason){
   }
 
   // Victory sweep → 1.5 s pause → end screen.
-  // A white peace skips the sweep entirely: nobody won, the map stays as-is.
+  // A white peace skips the sweep entirely: nobody won, and the map was
+  // already rewound to the pre-war state by rewindToWarStart() before
+  // endGame() was called.
   const showEndScreen = () => {
     setTimeout(() => {
       ['info','datepanel','ctrl'].forEach(id => {
