@@ -34,8 +34,8 @@ Troop sizes are seeded from real-world population figures, so picking a superpow
 * **Player-Controlled Diplomacy:** Pick zero, one, or several allies — then choose one or more enemy countries. Alliances do not need to make geopolitical sense. That's between you and history. 😂
 * **Coalition Territory:** Allied and enemy countries merge their territory, manpower and fronts into real fighting coalitions instead of acting as a cosmetic troop bonus.
 * **Historical Empire Starts:** Play as the Roman, Ottoman, British, Soviet or Mongol Empire. Their modern member territories become one playable entity on the map.
-* **Cell Grid Engine:** Every selected coalition territory is carved into invisible square cells. Each cell tracks its owner, its neighbours, and whether it sits on an active front line.
-* **Anti-Meridian-Safe Geography:** Date-line-spanning geometry is simulated in a continuous coordinate space and split safely for rendering, so Russia behaves like a normal country instead of drawing a front across the planet.
+* **High-Detail Cell Grid Engine:** Every selected coalition territory is carved into invisible square cells. Each cell tracks its owner, home nation, current formation, neighbours, and whether it sits on an active front line.
+* **Anti-Meridian-Safe Geography:** Date-line-spanning geometry is converted into continuous simulation rings and split safely for rendering. Russia and other seam-crossing countries do not create phantom territory, fronts, or world-spanning lines.
 * **Live Front Line Rendering:** Border cells are outlined in a warm yellow highlight — interior territory has no borders, so the coloured mass looks smooth and organic.
 * **Satellite Map Base:** ArcGIS World Imagery tiles provide a realistic satellite background at all zoom levels.
 
@@ -57,7 +57,7 @@ Troop sizes are seeded from real-world population figures, so picking a superpow
 ### Troop & Simulation System
 
 * **Population-Scaled Armies:** Max troop counts are derived from real 2023 population data (3.5% of population, capped at 35 million). Small countries genuinely have smaller armies; superpowers still feel like superpowers.
-* **Meaningful Casualties:** Losses are proportional to force scale, and combat effectiveness falls as formations are depleted. A battered remnant has less cohesion and cannot fight like a fresh army.
+* **Meaningful Casualties:** Losses are proportional to force scale, and combat effectiveness falls as formations are depleted. Major offensives are deliberately costly, so a battered remnant has less cohesion and cannot fight like a fresh army.
 * **Slow, Territory-Scaled Replacements:** Both sides rebuild slowly based on how much original territory they still hold. Reinforcements cannot instantly erase a disastrous battle.
 * **Real-Time Virtual Clock:** The simulation runs on an internal clock that drives combat ticks, regen ticks, AI rolls, and the in-game date display simultaneously.
 * **Speed Controls:** Step through the war at 1×, 2× or 3× real-time speed — everything in the simulation genuinely runs faster, not just the date counter.
@@ -65,10 +65,12 @@ Troop sizes are seeded from real-world population figures, so picking a superpow
 ### HUD & Interface
 
 * **Live Troop Counter:** Smooth interpolated display of your current force strength with a proportional capacity bar.
-* **Casualties Panel:** Real-time smoothed counters for both your losses and the enemy's.
+* **Coalition Roster:** The compact HUD shows each main nation, ally, and enemy member with its own current force and casualties.
+* **Casualties Panel:** Real-time smoothed counters for both coalition losses.
 * **In-Game Date:** Simulated calendar starting from 2020/01/01, advancing one game-day per second at 1× speed.
 * **Active Order Readout:** The HUD shows your current standing order and warns you when the enemy is on the offensive.
-* **Flag Icons on Territory:** Your flag and the enemy flag are scattered across controlled territory, with density and size that scale dynamically with your troop count and zoom level.
+* **National Flags on Territory:** Each coalition member retains its own flags on the map. Flags follow the formation currently holding territory, with density and size that scale dynamically with strength and zoom level.
+* **Front-Aware Force Labels:** Large map troop numbers sit inside friendly ground, face the relevant border, and split into separate major theatres when a war has multiple fronts.
 * **Animated Focus Rings:** A pulsing ring marks your attack target (red) or muster point (blue), and a separate orange ring marks the AI's active offensive target.
 
 ### Atmosphere

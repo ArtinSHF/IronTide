@@ -89,6 +89,10 @@ body{background:#060606;color:#ddd;font-family:'Courier New',monospace}
 .barf{height:100%;background:#5e8eff;transition:width .3s}
 .rlbl{font-size:9px;color:#7fa6e0;margin-top:6px;letter-spacing:.1em}
 .olbl{font-size:9px;color:#ffea4a;margin-top:4px;letter-spacing:.1em}
+.coalitionRoster{margin-top:9px;padding-top:8px;border-top:1px solid #292929;text-align:left;max-width:290px;max-height:38vh;overflow-y:auto}
+.coalitionHead{font-size:8px;letter-spacing:.18em;color:#999;margin:7px 0 4px}.coalitionHead:first-child{margin-top:0}.coalitionHead.player{color:#8fb7ff}.coalitionHead.enemy{color:#ff8b8b}
+.coalitionRow{display:grid;grid-template-columns:18px minmax(58px,1fr) auto;gap:6px;align-items:center;padding:3px 0;border-top:1px solid rgba(255,255,255,.045);font-size:9px;color:#bbb;white-space:nowrap}
+.coalitionRow img{width:18px;height:12px;object-fit:cover;border:1px solid #3a3a3a}.coalitionRow .nation{overflow:hidden;text-overflow:ellipsis}.coalitionRow.main .nation{color:#fff;font-weight:bold}.coalitionRow .numbers{text-align:right;font-weight:bold;color:#c8d8ff}.coalitionRow.enemy .numbers{color:#ffc1c1}.coalitionRow small{display:block;font-size:8px;font-weight:normal;color:#888;letter-spacing:.02em}
 
 /* Date — top-center */
 #datepanel{
@@ -182,13 +186,13 @@ body{background:#060606;color:#ddd;font-family:'Courier New',monospace}
 /* ═══ MAP OVERLAYS ════════════════════════════════════════════ */
 .tlbl{
   font-family:'Arial Black',Arial,sans-serif;
-  font-size:26px;
+  font-size:22px;
   font-weight:900;color:#fff;
   text-shadow:
-    -4px -4px 0 #000, 4px -4px 0 #000,
-    -4px  4px 0 #000, 4px  4px 0 #000,
-    -4px  0   0 #000, 4px  0   0 #000,
-     0   -4px 0 #000,  0   4px 0 #000,
+    -3px -3px 0 #000, 3px -3px 0 #000,
+    -3px  3px 0 #000, 3px  3px 0 #000,
+    -3px  0   0 #000, 3px  0   0 #000,
+     0   -3px 0 #000,  0   3px 0 #000,
      0 0 24px rgba(0,0,0,.9);
   white-space:nowrap;pointer-events:none;
   transform:translateX(-50%) translateY(-50%);
@@ -299,6 +303,7 @@ body{background:#060606;color:#ddd;font-family:'Courier New',monospace}
     <div class="rlbl" id="allylbl">ALLIANCE: —</div>
     <div class="olbl" id="olbl">NO ACTIVE ORDER</div>
     <div class="olbl" id="ealert" style="display:none;color:#ff9d2b">⚠ ENEMY OFFENSIVE — TROOPS DEFENDING</div>
+    <div class="coalitionRoster" id="coalitionRoster"></div>
   </div>
 
   <!-- Date — top-center -->
@@ -448,9 +453,9 @@ const C = {
   START_PCT:    0.50,
 
   // ─ cell grid (MUCH denser for smooth borders) ─
-  CELL_TARGET:  7000,         // aim for ~7000 cells inside both countries
-  CELL_MIN:     0.03,
-  CELL_MAX:     0.80,
+  CELL_TARGET:  11000,        // higher-detail fronts without making the Leaflet layer excessive
+  CELL_MIN:     0.025,
+  CELL_MAX:     0.65,
 
   // ─ frontier combat ─
   COMBAT_MS:    240,
@@ -468,9 +473,12 @@ const C = {
   // ATTACKER_LOSS_FRAC / DEFENDER_LOSS_FRAC replace the fixed values
   // above everywhere they appeared in combat functions.
   // TROOPS_PER_FLIP_FRAC scales the commit-pool drain the same way.
-  ATTACKER_LOSS_FRAC:   0.000030,
-  DEFENDER_LOSS_FRAC:   0.000046,
-  COUNTER_LOSS_FRAC:    0.000022,
+  // Large offensives now inflict operationally consequential losses.  The
+  // ratio model still determines who advances; these values only raise the
+  // human cost per resolved frontage action (roughly 7× the former pace).
+  ATTACKER_LOSS_FRAC:   0.000210,
+  DEFENDER_LOSS_FRAC:   0.000322,
+  COUNTER_LOSS_FRAC:    0.000154,
   TROOPS_PER_FLIP_FRAC: 0.000030,  // commit pool drains ~0.003 % of attacker max per flip
 
   // ─ troop-ratio combat scaling — steep on purpose: a big numerical
@@ -490,10 +498,10 @@ const C = {
   // ─ flag density (soldiers represented per flag, by army size) ─
   FLAG_TIER1_MAX:     1_000_000,  // below this →  1 flag per FLAG_DIV_LOW
   FLAG_TIER2_MAX:     5_000_000,  // below this →  1 flag per FLAG_DIV_MID
-  FLAG_DIV_LOW:          10_000,  // else        → 1 flag per FLAG_DIV_HIGH
-  FLAG_DIV_MID:         100_000,
-  FLAG_DIV_HIGH:        500_000,
-  FLAG_INTERIOR_RATIO:     0.15,  // share of flags scattered away from the front
+  FLAG_DIV_LOW:           8_000,  // slightly denser, still capped below
+  FLAG_DIV_MID:          70_000,
+  FLAG_DIV_HIGH:        320_000,
+  FLAG_INTERIOR_RATIO:     0.20,  // retain national identity behind the front too
   FLAG_BASE_W:                22, // baseline icon size in px (at nominal density)
   FLAG_BASE_H:                15,
   FLAG_MIN_PX:                14,
@@ -605,8 +613,9 @@ const S = {
   aiNextRollAt: 0,        // next time the enemy AI is allowed to roll for an attack
 
   // ─ display ─
-  flagPools: { player: [], enemy: [] }, // persistent flag markers (fade/resize, never popped)
+  flagPools: { player: {}, enemy: {} }, // persistent flag markers, keyed by nation
   labelMarkers: {},
+  memberRows: {},
   countryLayers: {},
   frontLineLayer: null,
   cellSide: 0.3,           // avg cell width/height in degrees, set in buildCellGrid()
@@ -634,6 +643,11 @@ const clamp= (v, a, b) => v < a ? a : v > b ? b : v;
 const mapLng = lng => ((lng + 180) % 360 + 360) % 360 - 180;
 const lngDelta = (a, b) => mapLng(a - b);
 
+function nearestWrappedLng(lng, reference){
+  const turns = Math.round((reference - lng) / 360);
+  return lng + turns * 360;
+}
+
 // ── POINT-IN-POLYGON (ray casting, supports MultiPolygon) ────────
 function pointInRing(pt, ring){
   let inside = false;
@@ -648,12 +662,14 @@ function pointInRing(pt, ring){
   return inside;
 }
 function pointInFeature(lonlat, feat){
-  // Russia (and any future trans-dateline faction) is gridded in an unwrapped
-  // longitude space; GeoJSON itself remains canonical, so convert test points
-  // back before ray-casting.
-  if (feat._wrapDateline && lonlat[0] > 180) lonlat = [lonlat[0] - 360, lonlat[1]];
-  const g = feat.geometry;
+  const g = feat._gridGeometry || feat.geometry;
   if (!g) return false;
+  // A grid can be placed in any adjacent 360° world copy.  Move the test
+  // point to the copy nearest this feature instead of folding Russia back
+  // into canonical longitude and reintroducing the date-line discontinuity.
+  lonlat = [nearestWrappedLng(lonlat[0], feat._gridCenterX || 0), lonlat[1]];
+  const bbox=feat._gridBBox;
+  if (bbox && (lonlat[0]<bbox[0] || lonlat[0]>bbox[2] || lonlat[1]<bbox[1] || lonlat[1]>bbox[3])) return false;
   if (g.type === 'Polygon'){
     if (!pointInRing(lonlat, g.coordinates[0])) return false;
     for (let i=1;i<g.coordinates.length;i++)
@@ -675,20 +691,27 @@ function pointInFeature(lonlat, feat){
 function featureBBox(feat){
   let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
   const each = ring => { for (const [rawX,y] of ring){
-    // Do not let a sliver across the date line make a 360° bounding box.
-    const x = feat._wrapDateline && rawX < 0 ? rawX + 360 : rawX;
+    const x = rawX;
     if (x<minX) minX=x; if (y<minY) minY=y;
     if (x>maxX) maxX=x; if (y>maxY) maxY=y;
   }};
-  const g = feat.geometry;
+  const g = feat._gridGeometry || feat.geometry;
   if (g.type === 'Polygon') g.coordinates.forEach(each);
   else if (g.type === 'MultiPolygon') g.coordinates.forEach(p => p.forEach(each));
   return [minX,minY,maxX,maxY];
 }
-function combinedBBox(featA, featB){
-  const [a1,a2,a3,a4] = featureBBox(featA);
-  const [b1,b2,b3,b4] = featureBBox(featB);
-  return [Math.min(a1,b1), Math.min(a2,b2), Math.max(a3,b3), Math.max(a4,b4)];
+function combinedBBox(features){
+  let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity, anchor=null;
+  for (const feat of features){
+    let [x1,y1,x2,y2] = featureBBox(feat);
+    const center = (x1+x2)/2;
+    const shift = anchor === null ? 0 : 360 * Math.round((anchor-center)/360);
+    x1 += shift; x2 += shift;
+    if (anchor === null) anchor = (x1+x2)/2;
+    else anchor = (anchor + (x1+x2)/2) / 2;
+    minX=Math.min(minX,x1); minY=Math.min(minY,y1); maxX=Math.max(maxX,x2); maxY=Math.max(maxY,y2);
+  }
+  return [minX,minY,maxX,maxY];
 }
 
 // Keep simulation coordinates continuous across the anti-meridian, but never
@@ -699,12 +722,49 @@ function displayPolysForCell(x0, y0, dx, dy){
   const rect = (left, right) => [[
     [y0, left], [y0, right], [y0 + dy, right], [y0 + dy, left]
   ]];
-  if (x0 < 180 && x0 + dx > 180){
-    return rect(x0, 180).concat(rect(-180, x0 + dx - 360));
+  const seam = 180 + 360 * Math.floor((x0 + 180) / 360);
+  if (x0 < seam && x0 + dx > seam){
+    return rect(mapLng(x0), 180).concat(rect(-180, mapLng(x0 + dx)));
   }
-  const left = x0 > 180 ? x0 - 360 : x0;
-  const right = x0 + dx > 180 ? x0 + dx - 360 : x0 + dx;
-  return rect(left, right);
+  return rect(mapLng(x0), mapLng(x0 + dx));
+}
+
+// GeoJSON keeps longitude in -180..180, but a polygon ring that crosses the
+// date line is discontinuous in that representation.  Grid physics needs a
+// continuous ring.  This conversion is data-driven (not Russia-specific): it
+// works for every country or coalition whose geometry crosses the seam.
+function prepareGridGeometry(feat){
+  const raw = feat.geometry;
+  const rings = raw.type === 'Polygon' ? raw.coordinates : raw.coordinates.flat();
+  let wraps = false;
+  for (const ring of rings){
+    let min=Infinity,max=-Infinity;
+    for (let i=0;i<ring.length;i++){
+      const x=ring[i][0]; min=Math.min(min,x); max=Math.max(max,x);
+      if (i && Math.abs(x-ring[i-1][0]) > 180) wraps=true;
+    }
+    if (max-min > 180) wraps=true;
+  }
+  const unwrapRing = ring => {
+    let previous=null;
+    return ring.map(([rawX,y]) => {
+      let x = wraps && rawX < 0 ? rawX + 360 : rawX;
+      if (previous !== null){
+        while (x - previous > 180) x -= 360;
+        while (x - previous < -180) x += 360;
+      }
+      previous=x;
+      return [x,y];
+    });
+  };
+  feat._gridGeometry = raw.type === 'Polygon'
+    ? { type:'Polygon', coordinates:raw.coordinates.map(unwrapRing) }
+    : { type:'MultiPolygon', coordinates:raw.coordinates.map(poly => poly.map(unwrapRing)) };
+  feat._wrapDateline = wraps;
+  const bbox=featureBBox(feat);
+  const [minX,,maxX] = bbox;
+  feat._gridBBox=bbox;
+  feat._gridCenterX = (minX+maxX)/2;
 }
 
 // ── DATA LOADING ──────────────────────────────────────────────────
@@ -748,9 +808,7 @@ async function boot() {
         borders: rc.borders || [],
         ctr, feat,
       };
-      // The Russian MultiPolygon crosses ±180°.  Mark it once at load time so
-      // both the grid bbox and point tests use the same longitude convention.
-      if (rc.cca3 === 'RUS') feat._wrapDateline = true;
+      prepareGridGeometry(feat);
     }
 
     bar.style.width = '100%';
@@ -862,9 +920,41 @@ function renderDiplomacy(){
 // that owner too — this is what stops small holes in the mosaic from
 // sitting there forever as uncapturable "empty" land that neither side
 // can ever claim.
+function membersForFaction(faction){
+  return faction?.members || [];
+}
+function countryAtPoint(lng, lat, members){
+  for (const code of members){
+    const c = S.countries[code];
+    if (c?.feat && pointInFeature([lng,lat], c.feat)) return code;
+  }
+  return null;
+}
+function homeSideForCountry(code){
+  const pc=S.countries[S.pCode], ec=S.countries[S.eCode];
+  if (membersForFaction(pc).includes(code)) return 'player';
+  if (membersForFaction(ec).includes(code)) return 'enemy';
+  return null;
+}
+function defaultFormation(side){
+  const faction=S.countries[side==='player'?S.pCode:S.eCode];
+  return faction?.primaryMembers?.[0] || faction?.members?.[0] || null;
+}
+function formationForCapture(cell, side, source){
+  if (source?.flagCountry && homeSideForCountry(source.flagCountry) === side) return source.flagCountry;
+  for (const nb of (cell.neighbors || []))
+    if (nb.owner === side && nb.flagCountry && homeSideForCountry(nb.flagCountry) === side) return nb.flagCountry;
+  return defaultFormation(side);
+}
+function setCellOwner(cell, side, source){
+  cell.owner=side;
+  cell.flagCountry=formationForCapture(cell, side, source);
+}
 function buildCellGrid(){
   const pc = S.countries[S.pCode], ec = S.countries[S.eCode];
-  const [minX,minY,maxX,maxY] = combinedBBox(pc.feat, ec.feat);
+  const pMembers = membersForFaction(pc), eMembers = membersForFaction(ec);
+  const features = pMembers.concat(eMembers).map(code => S.countries[code]?.feat).filter(Boolean);
+  const [minX,minY,maxX,maxY] = combinedBBox(features);
 
   const w = maxX - minX, h = maxY - minY;
   // Land typically fills <40% of the union bbox, so over-shoot the
@@ -880,18 +970,23 @@ function buildCellGrid(){
   // First pass: figure out just the owner of every grid slot (no cell
   // objects yet) using several sample points per cell.
   const SAMPLES = [[0.5,0.5], [0.18,0.18], [0.82,0.18], [0.18,0.82], [0.82,0.82]];
-  const ownerGrid = new Map(); // "ix,iy" -> 'player' | 'enemy'
+  const ownerGrid = new Map(); // "ix,iy" -> { side, country }
   for (let iy = 0; iy < nY; iy++){
     for (let ix = 0; ix < nX; ix++){
       const x0 = minX + ix * dx, y0 = minY + iy * dy;
-      let pHits = 0, eHits = 0;
+      const pHits = new Map(), eHits = new Map();
       for (const [ox, oy] of SAMPLES){
         const px = x0 + dx * ox, py = y0 + dy * oy;
-        if (pointInFeature([px, py], pc.feat)) pHits++;
-        else if (pointInFeature([px, py], ec.feat)) eHits++;
+        const p = countryAtPoint(px, py, pMembers);
+        const e = p ? null : countryAtPoint(px, py, eMembers);
+        if (p) pHits.set(p, (pHits.get(p)||0)+1);
+        else if (e) eHits.set(e, (eHits.get(e)||0)+1);
       }
-      if (pHits === 0 && eHits === 0) continue; // genuinely outside both — sea / unrelated land
-      ownerGrid.set(ix + ',' + iy, pHits >= eHits ? 'player' : 'enemy');
+      const pick = hits => [...hits.entries()].sort((a,b)=>b[1]-a[1])[0];
+      const pBest=pick(pHits), eBest=pick(eHits);
+      if (!pBest && !eBest) continue; // genuinely outside both — sea / unrelated land
+      const winner = !eBest || (pBest && pBest[1] >= eBest[1]) ? ['player',pBest[0]] : ['enemy',eBest[0]];
+      ownerGrid.set(ix + ',' + iy, { side:winner[0], country:winner[1] });
     }
   }
 
@@ -905,11 +1000,13 @@ function buildCellGrid(){
         const key = ix + ',' + iy;
         if (ownerGrid.has(key)) continue;
         const around = [[ix-1,iy],[ix+1,iy],[ix,iy-1],[ix,iy+1]]
-          .map(([nx, ny]) => ownerGrid.get(nx + ',' + ny))
+          .map(([nx, ny]) => ownerGrid.get(nx + ',' + ny)?.side)
           .filter(Boolean);
         if (around.length < 3) continue; // only fold in slots that are mostly boxed-in
         if (around.every(o => o === around[0])){
-          ownerGrid.set(key, around[0]);
+          const nearby = [[ix-1,iy],[ix+1,iy],[ix,iy-1],[ix,iy+1]]
+            .map(([nx,ny]) => ownerGrid.get(nx+','+ny)).find(v=>v?.side===around[0]);
+          ownerGrid.set(key, { side:around[0], country:nearby?.country || defaultFormation(around[0]) });
           filledAny = true;
         }
       }
@@ -919,11 +1016,11 @@ function buildCellGrid(){
 
   S.cells = [];
   S.cellByXY = new Map();
-  for (const [key, owner] of ownerGrid){
+  for (const [key, initial] of ownerGrid){
     const [ix, iy] = key.split(',').map(Number);
     const x0 = minX + ix * dx, y0 = minY + iy * dy;
     const cx = x0 + dx * 0.5, cy = y0 + dy * 0.5;
-      const origCountry = owner === 'player' ? S.pCode : S.eCode;
+      const origCountry = initial.country;
       const cell = {
       ix, iy,
       c:   [cy, cx],
@@ -934,8 +1031,10 @@ function buildCellGrid(){
         [y0 + dy,   x0],
         ],
         displayPolys: displayPolysForCell(x0, y0, dx, dy),
-      owner,
+      owner:initial.side,
       origCountry,
+      homeSide:initial.side,
+      flagCountry:initial.country,
       neighbors: [],
     };
     S.cells.push(cell);
@@ -955,14 +1054,20 @@ function recountCells(){
   for (const c of Object.values(S.countries)){
     c.cellsHeld = 0; c.cellsOrigTotal = 0;
   }
+  const pc=S.countries[S.pCode], ec=S.countries[S.eCode];
+  if (pc){ pc.cellsHeld=0; pc.cellsOrigTotal=0; }
+  if (ec){ ec.cellsHeld=0; ec.cellsOrigTotal=0; }
   let pOwned = 0, eOwned = 0;
   for (const cell of S.cells){
     const orig = S.countries[cell.origCountry];
     orig.cellsOrigTotal++;
-    const origSide = orig.ctrl === 'neutral'
-      ? (cell.origCountry === S.pCode ? 'player' : 'enemy')
-      : orig.ctrl;
+    const origSide = cell.homeSide;
     if (cell.owner === origSide) orig.cellsHeld++;
+    const faction = origSide === 'player' ? pc : ec;
+    if (faction){
+      faction.cellsOrigTotal++;
+      if (cell.owner === origSide) faction.cellsHeld++;
+    }
     if (cell.owner === 'player') pOwned++;
     if (cell.owner === 'enemy' ) eOwned++;
   }
@@ -1002,14 +1107,110 @@ function createFaction(selection, side, allies){
   const base = EMPIRES[selection];
   const primary = base || S.countries[selection];
   const code = side === 'player' ? '__PLAYER_COALITION__' : '__ENEMY_COALITION__';
-  S.countries[code] = {
+  const faction = S.countries[code] = {
     name: base ? base.name : primary.name,
     iso2: base ? base.iso2 : primary.iso2,
     flagUrl: FLAG_URL(base ? base.iso2 : primary.iso2), pop, max, troops:0,
     ctrl:side, borders:[], ctr, feat:mergeFeatures(members), members,
-    allies: members.filter(c => c !== selection), primary:selection, regenMult:1,
+    primaryMembers, allies: (allies || []).filter(c => members.includes(c)), primary:selection, regenMult:1,
+    memberStats:{},
   };
+  // The simulation keeps one aggregate fighting pool, while this roster keeps
+  // the real national composition visible.  Scale members to the coalition
+  // cap so the displayed totals always add up to the force actually fielded.
+  let assignedMax=0, assignedTroops=0;
+  members.forEach((member, index) => {
+    const country=S.countries[member];
+    const isLast=index===members.length-1;
+    const memberMax=isLast ? Math.max(0, max-assignedMax) : Math.floor(max*country.pop/Math.max(1,pop));
+    const troops=isLast ? Math.max(0, Math.floor(max*C.START_PCT)-assignedTroops) : Math.floor(memberMax*C.START_PCT);
+    faction.memberStats[member]={ max:memberMax, troops, casualties:0 };
+    assignedMax+=memberMax; assignedTroops+=troops;
+  });
   return code;
+}
+
+function memberForce(faction, code){
+  return faction?.memberStats?.[code]?.troops || 0;
+}
+function applyFactionLoss(faction, requested, preferredCountry){
+  const isPlayer=faction===S.countries[S.pCode];
+  const orders=isPlayer ? [S.attackOrder,S.moveOrder] : [S.enemyAttackOrder];
+  const committed=orders.reduce((sum,o)=>sum+Math.max(0,o?.commit||0),0);
+  const loss=Math.min(Math.max(0,requested), faction.troops+committed);
+  // Formations fighting at the front absorb the loss first.  This prevents a
+  // 99% commitment from making troops effectively immortal just because the
+  // reserve pool is nearly empty.
+  let remaining=loss;
+  for (const order of orders){
+    if (!order || remaining<=0) continue;
+    const spent=Math.min(order.commit,remaining);
+    order.commit-=spent; remaining-=spent;
+  }
+  faction.troops=Math.max(0,faction.troops-remaining);
+  remaining=loss;
+  const entries=Object.entries(faction.memberStats || {}).sort(([a],[b]) =>
+    (a===preferredCountry?-1:0) - (b===preferredCountry?-1:0));
+  const available=entries.reduce((sum,[,s])=>sum+s.troops,0) || 1;
+  for (let i=0;i<entries.length;i++){
+    const [,stat]=entries[i];
+    const share=i===entries.length-1 ? Math.min(stat.troops,remaining) : Math.min(stat.troops, loss*(stat.troops/available));
+    stat.troops=Math.max(0,stat.troops-share);
+    stat.casualties+=share;
+    remaining-=share;
+  }
+  return loss;
+}
+function addFactionReplacements(faction, requested){
+  const committed=(faction===S.countries[S.pCode] ? [S.attackOrder,S.moveOrder] : [S.enemyAttackOrder])
+    .reduce((sum,o)=>sum+Math.max(0,o?.commit||0),0);
+  let gain=Math.min(Math.max(0,requested), faction.max-faction.troops-committed);
+  if (!gain) return 0;
+  const entries=Object.entries(faction.memberStats || {}).map(([code,stat])=>({ code,stat, held:S.countries[code]?.cellsHeld||0 }));
+  const weight=entries.reduce((sum,e)=>sum+Math.max(1,e.held),0) || 1;
+  let remaining=gain;
+  entries.forEach((e,index)=>{
+    const room=Math.max(0,e.stat.max-e.stat.troops);
+    const portion=index===entries.length-1 ? remaining : Math.min(room,gain*Math.max(1,e.held)/weight);
+    e.stat.troops+=portion; remaining-=portion;
+  });
+  const actual=gain-remaining;
+  faction.troops+=actual;
+  return actual;
+}
+
+function buildCoalitionHUD(){
+  const host=$('coalitionRoster');
+  if (!host) return;
+  host.innerHTML=''; S.memberRows={};
+  for (const [side, code] of [['player',S.pCode],['enemy',S.eCode]]){
+    const faction=S.countries[code]; if (!faction) continue;
+    const head=document.createElement('div');
+    head.className=`coalitionHead ${side}`;
+    head.textContent=side==='player' ? `${faction.name.toUpperCase()} COALITION` : `${faction.name.toUpperCase()} COALITION`;
+    host.appendChild(head);
+    for (const member of faction.members){
+      const country=S.countries[member], stat=faction.memberStats[member];
+      if (!country || !stat) continue;
+      const row=document.createElement('div');
+      const isMain=faction.primaryMembers.includes(member);
+      row.className=`coalitionRow ${side} ${isMain?'main':''}`;
+      row.innerHTML=`<img src="${country.flagUrl}" alt=""><span class="nation">${isMain?'MAIN · ':''}${country.name}</span><span class="numbers"><b>—</b><small>—</small></span>`;
+      host.appendChild(row);
+      S.memberRows[member]={ force:row.querySelector('b'), loss:row.querySelector('small') };
+    }
+  }
+  updateCoalitionHUD();
+}
+function updateCoalitionHUD(){
+  for (const code of [S.pCode,S.eCode]){
+    const faction=S.countries[code];
+    for (const [member,stat] of Object.entries(faction?.memberStats || {})){
+      const row=S.memberRows[member]; if (!row) continue;
+      row.force.textContent=fmt(stat.troops);
+      row.loss.textContent=`LOSS ${fmt(stat.casualties)}`;
+    }
+  }
 }
 
 // ── START GAME ────────────────────────────────────────────────────
@@ -1044,6 +1245,7 @@ function startGame() {
   $('rlbl').textContent = `REGEN: +${fmt(Math.floor(pc.max * C.REGEN_RATE))}/s`;
   const allies = pc.allies.length ? pc.allies.map(k => S.countries[k]?.name).filter(Boolean).join(', ') : 'none';
   $('allylbl').textContent = `ALLIES: ${allies.toUpperCase()}`;
+  buildCoalitionHUD();
 
   S.disp.pTroops = pc.troops;
   S.disp.pCas = 0; S.disp.eCas = 0;
@@ -1319,7 +1521,7 @@ function applyRetreatCession(){
 
   const changed = [];
   for (const c of core.concat(buffer)){
-    c.owner = 'enemy';
+    setCellOwner(c, 'enemy');
     changed.push(c);
     for (const nb of c.neighbors) changed.push(nb);
   }
@@ -1461,18 +1663,19 @@ function retreatTick(){
 
   for (let i = 0; i < cedeCount; i++){
     const c = stillOwned[i];
-    c.owner = 'enemy';
+    const withdrawingFormation=c.flagCountry;
+    setCellOwner(c, 'enemy');
     changed.push(c);
     for (const nb of c.neighbors) changed.push(nb);
 
     // Retreating player: barely any casualties.
-    const pLoss = pc.max * 0.0000008 * (0.4 + Math.random() * 0.6);
+    const pLoss = pc.max * 0.0000056 * (0.4 + Math.random() * 0.6);
     // Enemy advancing into contested ground: heavy toll.
-    const eLoss = ec.max * 0.000014  * (0.7 + Math.random() * 0.6);
-    pc.troops = Math.max(0, pc.troops - pLoss);
-    ec.troops = Math.max(0, ec.troops - eLoss);
-    S.cas.p += pLoss;
-    S.cas.e += eLoss;
+    const eLoss = ec.max * 0.000098  * (0.7 + Math.random() * 0.6);
+    const pActual=applyFactionLoss(pc, pLoss, withdrawingFormation);
+    const eActual=applyFactionLoss(ec, eLoss, formationForCapture(c, 'enemy'));
+    S.cas.p += pActual;
+    S.cas.e += eActual;
   }
 
   if (changed.length){ refreshCells(changed); recountCells(); checkWin(); }
@@ -1568,14 +1771,15 @@ function enemyRetreatTick(){
   const changed = [];
   for (let i = 0; i < cedeCount; i++){
     const c = stillOwned[i];
-    c.owner = 'player';
+    const withdrawingFormation=c.flagCountry;
+    setCellOwner(c, 'player');
     changed.push(c);
     for (const nb of c.neighbors) changed.push(nb);
-    const eLoss = ec.max * 0.0000008 * (0.4 + Math.random() * 0.6);
-    const pLoss = pc.max * 0.000014  * (0.7 + Math.random() * 0.6);
-    ec.troops = Math.max(0, ec.troops - eLoss);
-    pc.troops = Math.max(0, pc.troops - pLoss);
-    S.cas.e += eLoss; S.cas.p += pLoss;
+    const eLoss = ec.max * 0.0000056 * (0.4 + Math.random() * 0.6);
+    const pLoss = pc.max * 0.000098  * (0.7 + Math.random() * 0.6);
+    const eActual=applyFactionLoss(ec, eLoss, withdrawingFormation);
+    const pActual=applyFactionLoss(pc, pLoss, formationForCapture(c, 'player'));
+    S.cas.e += eActual; S.cas.p += pActual;
   }
   if (changed.length){ refreshCells(changed); recountCells(); checkWin(); }
 }
@@ -1756,13 +1960,13 @@ function combatTick(){
   }
 
   // ── AI-ordered offensive + automatic player defense ────────────
-  if (S.enemyAttackOrder && S.enemyAttackOrder.commit > 0 && pc.troops > 0){
+  if (S.enemyAttackOrder && S.enemyAttackOrder.commit > 0 && effectiveTroops('player') > 0){
     const eFronts2 = frontierCellsOf('enemy');
     if (eFronts2.length){
       runEnemyPush({ attackerCountry: ec, defenderCountry: pc, frontiers: eFronts2, changed });
     }
   }
-  if (S.enemyAttackOrder && pc.troops > 0){
+  if (S.enemyAttackOrder && effectiveTroops('player') > 0){
     const pFronts2 = frontierCellsOf('player');
     if (pFronts2.length){
       runPlayerAutoDefense({ ec, pc, frontiers: pFronts2, changed });
@@ -1894,7 +2098,8 @@ function runPlayerPush({ attackerCountry, defenderCountry, frontiers, changed })
     if (Math.random() >= Math.min(0.95, cand.p)) continue;
 
     const cell = cand.to;
-    cell.owner = 'player';
+    const defenderFormation=cell.flagCountry;
+    setCellOwner(cell, 'player', cand.from);
 
     // Losses proportional to each side's max army — same relative rate
     // regardless of whether it's a 500K or 20M-troop matchup.
@@ -1904,9 +2109,9 @@ function runPlayerPush({ attackerCountry, defenderCountry, frontiers, changed })
     const defLoss  = defenderCountry.max * C.DEFENDER_LOSS_FRAC * (0.6 + Math.random()*0.8);
 
     order.commit = Math.max(0, order.commit - atkSpend);
-    attackerCountry.troops = Math.max(0, attackerCountry.troops - atkLoss);
-    defenderCountry.troops = Math.max(0, defenderCountry.troops - defLoss);
-    S.cas.p += atkLoss; S.cas.e += defLoss;
+    const atkActual=applyFactionLoss(attackerCountry, atkLoss, cand.from.flagCountry);
+    const defActual=applyFactionLoss(defenderCountry, defLoss, defenderFormation);
+    S.cas.p += atkActual; S.cas.e += defActual;
     for (const nb of cell.neighbors) changed.push(nb);
     budget--;
     if (order.commit <= 0) break;
@@ -1979,14 +2184,15 @@ function runEnemyCounter({ attackerCountry, defenderCountry, frontiers, changed 
     if (Math.random() >= Math.min(0.85, cand.p)) continue;
 
     const cell = cand.to;
-    cell.owner = 'enemy';
+    const defenderFormation=cell.flagCountry;
+    setCellOwner(cell, 'enemy', cand.from);
 
     const atkLoss = attackerCountry.max * C.COUNTER_LOSS_FRAC   * (0.5 + Math.random()*0.9);
     const defLoss = defenderCountry.max * C.ATTACKER_LOSS_FRAC  * (0.5 + Math.random()*0.9);
 
-    attackerCountry.troops = Math.max(0, attackerCountry.troops - atkLoss);
-    defenderCountry.troops = Math.max(0, defenderCountry.troops - defLoss);
-    S.cas.e += atkLoss; S.cas.p += defLoss;
+    const atkActual=applyFactionLoss(attackerCountry, atkLoss, cand.from.flagCountry);
+    const defActual=applyFactionLoss(defenderCountry, defLoss, defenderFormation);
+    S.cas.e += atkActual; S.cas.p += defActual;
 
     // Mustered troops absorb some of the loss when the cell taken
     // was being defended by them.
@@ -2050,15 +2256,16 @@ function runEnemyPush({ attackerCountry, defenderCountry, frontiers, changed }){
     if (Math.random() >= Math.min(0.95, cand.p)) continue;
 
     const cell = cand.to;
-    cell.owner = 'enemy';
+    const defenderFormation=cell.flagCountry;
+    setCellOwner(cell, 'enemy', cand.from);
 
     const atkLoss = attackerCountry.max * C.ATTACKER_LOSS_FRAC * (0.6 + Math.random()*0.8);
     const defLoss = defenderCountry.max * C.DEFENDER_LOSS_FRAC * (0.6 + Math.random()*0.8);
 
     order.commit = Math.max(0, order.commit - troopsPerFlipE);
-    attackerCountry.troops = Math.max(0, attackerCountry.troops - atkLoss);
-    defenderCountry.troops = Math.max(0, defenderCountry.troops - defLoss);
-    S.cas.e += atkLoss; S.cas.p += defLoss;
+    const atkActual=applyFactionLoss(attackerCountry, atkLoss, cand.from.flagCountry);
+    const defActual=applyFactionLoss(defenderCountry, defLoss, defenderFormation);
+    S.cas.e += atkActual; S.cas.p += defActual;
 
     changed.push(cell, cand.from);
     for (const nb of cell.neighbors) changed.push(nb);
@@ -2095,7 +2302,7 @@ function runPlayerAutoDefense({ ec, pc, frontiers, changed }){
 
     for (const nb of fc.neighbors){
       if (nb.owner !== 'enemy') continue;
-      if (nb.origCountry !== S.pCode) continue; // never auto-invade enemy native soil
+      if (nb.homeSide !== 'player') continue; // never auto-invade player-home soil
       candidates.push({ from: fc, to: nb, p: cellPressure });
     }
   }
@@ -2112,14 +2319,15 @@ function runPlayerAutoDefense({ ec, pc, frontiers, changed }){
     if (Math.random() >= Math.min(0.85, cand.p)) continue;
 
     const cell = cand.to;
-    cell.owner = 'player';
+    const defenderFormation=cell.flagCountry;
+    setCellOwner(cell, 'player', cand.from);
 
     const atkLoss = pc.max * C.COUNTER_LOSS_FRAC  * (0.5 + Math.random()*0.9);
     const defLoss = ec.max * C.ATTACKER_LOSS_FRAC * (0.5 + Math.random()*0.9);
 
-    pc.troops = Math.max(0, pc.troops - atkLoss);
-    ec.troops = Math.max(0, ec.troops - defLoss);
-    S.cas.p += atkLoss; S.cas.e += defLoss;
+    const atkActual=applyFactionLoss(pc, atkLoss, cand.from.flagCountry);
+    const defActual=applyFactionLoss(ec, defLoss, defenderFormation);
+    S.cas.p += atkActual; S.cas.e += defActual;
 
     if (S.enemyAttackOrder){
       const dx = cell.c[0] - S.enemyAttackOrder.lat, dy = cell.c[1] - S.enemyAttackOrder.lng;
@@ -2149,7 +2357,7 @@ function regenTick(){
     if (c.regenMult === undefined) c.regenMult = 1;
     c.regenMult = lerp(c.regenMult, held, C.REGEN_MULT_SMOOTH);
     const gain = Math.floor(c.max * C.REGEN_RATE * c.regenMult);
-    c.troops   = Math.min(c.troops + gain, c.max);
+    addFactionReplacements(c, gain);
   }
   const pc = S.countries[S.pCode];
   if (pc) $('rlbl').textContent = `REGEN: +${fmt(Math.floor(pc.max * C.REGEN_RATE * pc.regenMult))}/s`;
@@ -2162,8 +2370,10 @@ function regenTick(){
 // across ticks (fade in/out + resize smoothly) instead of being fully
 // destroyed and recreated, and that density now scales with army size.
 function renderFlagsAndLabels(){
-  syncFlags('player');
-  syncFlags('enemy');
+  for (const side of ['player','enemy']){
+    const faction=S.countries[side==='player'?S.pCode:S.eCode];
+    for (const country of faction?.members || []) syncFlags(side, country);
+  }
   drawTroopLabel('player');
   drawTroopLabel('enemy');
   renderFrontLine();
@@ -2201,7 +2411,20 @@ function renderFrontLine(){
         aLat = mLat; aLng = mLng - half;
         bLat = mLat; bLng = mLng + half;
       }
-      segments.push([[aLat, aLng], [bLat, bLng]]);
+      // Keep every rendered segment in the same short world copy.  A cell
+      // edge that straddles ±180° must be split, otherwise Leaflet draws a
+      // spectacular but fictional front line across the entire planet.
+      const lo=Math.min(aLng,bLng), hi=Math.max(aLng,bLng);
+      const seam=180+360*Math.floor((lo+180)/360);
+      if (lo < seam && hi > seam){
+        const t=(seam-aLng)/(bLng-aLng);
+        const midLat=aLat+(bLat-aLat)*t;
+        const eastward=bLng>aLng;
+        segments.push([[aLat,mapLng(aLng)],[midLat,eastward?180:-180]]);
+        segments.push([[midLat,eastward?-180:180],[bLat,mapLng(bLng)]]);
+      } else {
+        segments.push([[aLat,mapLng(aLng)], [bLat,mapLng(bLng)]]);
+      }
     }
   }
   if (!segments.length) return;
@@ -2227,10 +2450,11 @@ function flagsPerFlagDivisor(troops){
 // Troops under your command right now, including anything committed
 // to an active order (so flags don't vanish just because part of the
 // force is earmarked for an attack/move/AI order).
-function effectiveTroops(side){
+function effectiveTroops(side, country){
   const code  = side === 'player' ? S.pCode : S.eCode;
   const ctry  = S.countries[code];
   if (!ctry) return 0;
+  if (country) return memberForce(ctry, country);
   let t = ctry.troops;
   if (side === 'player'){
     if (S.attackOrder) t += S.attackOrder.commit;
@@ -2325,16 +2549,17 @@ function clusterPointsAround(center, count, radius){
 // troops each flag stands in for. This is recomputed fresh every tick
 // — only syncFlags() (below) decides what to do with the result so
 // existing markers fade/resize/glide instead of popping or teleporting.
-function computeFlagTargets(side){
-  const total = effectiveTroops(side);
+function computeFlagTargets(side, country){
+  const total = effectiveTroops(side, country);
   if (total <= 0) return [];
   const perFlag = flagsPerFlagDivisor(total);
-  const desired = clamp(Math.round(total / perFlag), 1, 400);
+  const desired = clamp(Math.round(total / perFlag), 1, 120);
 
-  const owned = S.cells.filter(c => c.owner === side);
+  const owned = S.cells.filter(c => c.owner === side && c.flagCountry === country);
   if (!owned.length) return [];
 
-  const fronts = frontierCellsOf(side);
+  const enemySide=side==='player'?'enemy':'player';
+  const fronts = owned.filter(c => c.neighbors.some(nb=>nb.owner===enemySide));
   const frontSet = new Set(fronts);
   const interiorCells = owned.filter(c => !frontSet.has(c));
 
@@ -2342,7 +2567,7 @@ function computeFlagTargets(side){
   // to how much of your force is mustering there should actually leave
   // the border and gather at the muster point — not just one flag.
   let musterCount = 0, musterCenter = null;
-  if (side === 'player' && S.moveOrder && total > 0){
+  if (side === 'player' && S.moveOrder && total > 0 && country === defaultFormation('player')){
     const frac = clamp(S.moveOrder.commit / total, 0, 1);
     musterCount = Math.min(desired, Math.round(desired * frac));
     if (musterCount > 0) musterCenter = [S.moveOrder.lat, S.moveOrder.lng];
@@ -2394,9 +2619,8 @@ function flagPxSize(scale){
   const h = Math.round(w * C.FLAG_BASE_H / C.FLAG_BASE_W);
   return [w, h];
 }
-function makeFlagMarker(side, lat, lng, scale){
-  const code = side === 'player' ? S.pCode : S.eCode;
-  const ctry = S.countries[code];
+function makeFlagMarker(side, country, lat, lng, scale){
+  const ctry = S.countries[country];
   const [w, h] = flagPxSize(scale);
   const icon = L.divIcon({
     className: 'flagWrap', iconAnchor: [Math.round(w/2), Math.round(h/2)],
@@ -2457,9 +2681,10 @@ function fadeOutFlag(entry){
 // target on the opposite side of the map, which is exactly what made
 // flags/troops appear to randomly teleport. Nearest-match means each
 // flag always glides to whichever target is actually closest to it.
-function syncFlags(side){
-  const pool = S.flagPools[side];
-  const targets = computeFlagTargets(side);
+function syncFlags(side, country){
+  const pools=S.flagPools[side] || (S.flagPools[side]={});
+  const pool=pools[country] || (pools[country]=[]);
+  const targets = computeFlagTargets(side, country);
   const alive = pool.filter(e => !e.dead);
 
   const nE = alive.length, nT = targets.length;
@@ -2512,13 +2737,13 @@ function syncFlags(side){
     if (usedTarget[j]) continue;
     const t = targets[j];
     pool.push({
-      marker: makeFlagMarker(side, t.lat, t.lng, t.scale),
+      marker: makeFlagMarker(side, country, t.lat, t.lng, t.scale),
       dead: false, lat: t.lat, lng: t.lng,
     });
   }
 
   // Drop fully-removed dead entries so the pool doesn't grow forever.
-  S.flagPools[side] = pool.filter(e => !e.dead || map.hasLayer(e.marker));
+  pools[country] = pool.filter(e => !e.dead || map.hasLayer(e.marker));
 }
 
 
@@ -2570,78 +2795,78 @@ function facingTilt(bearingDeg, maxTilt){
 // once a side is fully eliminated (no land left at all); a temporarily
 // low standing-troop count never hides it, which is what used to make
 // it flicker in and out.
-function drawTroopLabel(side){
-  const code = side === 'player' ? S.pCode : S.eCode;
-  const ctry = S.countries[code];
-  const cells = ctry ? S.cells.filter(c => c.owner === side) : [];
-
-  if (!ctry || cells.length === 0){
-    const old = S.labelMarkers[side];
-    if (old && map.hasLayer(old)) map.removeLayer(old);
-    delete S.labelMarkers[side];
-    return;
+function frontComponents(side){
+  const fronts=frontierCellsOf(side), set=new Set(fronts), seen=new Set(), groups=[];
+  for (const start of fronts){
+    if (seen.has(start)) continue;
+    const group=[], queue=[start]; seen.add(start);
+    for (let i=0;i<queue.length;i++){
+      const cur=queue[i]; group.push(cur);
+      for (const nb of cur.neighbors)
+        if (set.has(nb) && !seen.has(nb)){ seen.add(nb); queue.push(nb); }
+    }
+    groups.push(group);
   }
-
-  // Position: blend 65 % toward the frontier centroid, 35 % toward the
-  // territory centroid.  This puts the label visibly close to the active
-  // front line (what the user wants) without sitting literally on top of
-  // the border flags.
-  let sLat = 0, sLng = 0;
-  for (const c of cells){ sLat += c.c[0]; sLng += c.c[1]; }
-  let lat = sLat / cells.length, lng = sLng / cells.length; // territory centroid
-
-  const fronts = frontierCellsOf(side);
-  if (fronts.length){
-    let fLat = 0, fLng = 0;
-    for (const c of fronts){ fLat += c.c[0]; fLng += c.c[1]; }
-    fLat /= fronts.length; fLng /= fronts.length;
-    lat = lat * 0.35 + fLat * 0.65;
-    lng = lng * 0.35 + fLng * 0.65;
-  }
-
-  // Snap to nearest owned cell so label is always on solid ground.
-  let best = cells[0], bd = Infinity;
+  // Only material fronts earn their own number.  This prevents tiny islands
+  // or a one-cell pocket from creating visual noise, while disconnected major
+  // theatres naturally receive separate formations.
+  const largest=Math.max(1,...groups.map(g=>g.length));
+  return groups.filter(g=>g.length>=Math.max(3,largest*0.08)).sort((a,b)=>b.length-a.length).slice(0,4);
+}
+function labelAnchor(side, group, cells){
+  let lat=0,lng=0;
+  for (const c of group){ lat+=c.c[0]; lng+=c.c[1]; }
+  lat/=group.length; lng/=group.length;
+  let edge=group[0], edgeDist=Infinity;
+  for (const c of group){ const d=(c.c[0]-lat)**2+(c.c[1]-lng)**2; if(d<edgeDist){edge=c;edgeDist=d;} }
+  const dir=neighborEnemyDirection(edge,side) || nearestEnemyDirection(edge.c[0],edge.c[1],side) || {dLat:0,dLng:0};
+  const len=Math.hypot(dir.dLat,dir.dLng)||1;
+  const target=[edge.c[0]-(dir.dLat/len)*S.cellSide*2.1, edge.c[1]-(dir.dLng/len)*S.cellSide*2.1];
+  let best=edge,bestScore=Infinity;
   for (const c of cells){
-    const dx = c.c[0]-lat, dy = c.c[1]-lng, d = dx*dx + dy*dy;
-    if (d < bd){ bd = d; best = c; }
+    const d=(c.c[0]-target[0])**2+(c.c[1]-target[1])**2;
+    if(d<bestScore){best=c;bestScore=d;}
   }
-  lat = best.c[0]; lng = best.c[1];
-
-  // Lean toward the enemy border.  Using sin(bearing) gives a clear
-  // diagonal lean for E/W conflicts (the most common case) without
-  // making N/S conflicts print text sideways.
-  const dir = neighborEnemyDirection(best, side) || nearestEnemyDirection(lat, lng, side);
-  const tilt = dir ? facingTilt(bearingOf(dir, lat)) : 0;
-
-  let display = ctry.troops;
-  if (side === 'player'){
-    if (S.attackOrder) display += S.attackOrder.commit;
-    if (S.moveOrder)   display += S.moveOrder.commit;
-  } else if (S.enemyAttackOrder){
-    display += S.enemyAttackOrder.commit;
+  return best;
+}
+function drawTroopLabel(side){
+  const code=side==='player'?S.pCode:S.eCode, ctry=S.countries[code];
+  const cells=ctry ? S.cells.filter(c=>c.owner===side) : [];
+  const old=S.labelMarkers[side] || [];
+  if (!ctry || !cells.length){ old.forEach(m=>map.hasLayer(m.marker)&&map.removeLayer(m.marker)); delete S.labelMarkers[side]; return; }
+  let groups=frontComponents(side);
+  if (!groups.length) groups=[cells];
+  const total=effectiveTroops(side), totalFront=groups.reduce((n,g)=>n+g.length,0);
+  const targets=groups.map(group=>{
+    const anchor=labelAnchor(side,group,cells);
+    const share=groups.length===1 ? total : total*(group.length/Math.max(1,totalFront));
+    const dir=neighborEnemyDirection(anchor,side)||nearestEnemyDirection(anchor.c[0],anchor.c[1],side);
+    return { cell:anchor, display:share, tilt:dir?facingTilt(bearingOf(dir,anchor.c[0]),42):0 };
+  });
+  const used=new Set();
+  for (const target of targets){
+    let entry=null, best=Infinity;
+    for (const candidate of old){
+      if(used.has(candidate)) continue;
+      const d=(candidate.lat-target.cell.c[0])**2+(candidate.lng-target.cell.c[1])**2;
+      if(d<best){best=d;entry=candidate;}
+    }
+    if(!entry){
+      const icon=L.divIcon({className:'',iconAnchor:[0,0],html:'<div class="tlbl"></div>'});
+      entry={ marker:L.marker([target.cell.c[0],mapLng(target.cell.c[1])],{icon,zIndexOffset:800,interactive:false}).addTo(map) };
+      old.push(entry);
+    }
+    used.add(entry); entry.lat=target.cell.c[0]; entry.lng=target.cell.c[1];
+    entry.marker.setLatLng([entry.lat,mapLng(entry.lng)]);
+    const frac=ctry.max?clamp(target.display/ctry.max,0,1):0;
+    const inner=entry.marker.getElement()?.querySelector('.tlbl');
+    if(inner){
+      inner.textContent=fmt(target.display);
+      inner.style.transform=`translateX(-50%) translateY(-50%) rotate(${target.tilt.toFixed(1)}deg) scale(${(0.82+frac*0.16).toFixed(3)})`;
+    }
   }
-
-  // Subtle size scaling with troop count — not dramatic.
-  const frac = ctry.max > 0 ? clamp(display / ctry.max, 0, 1) : 0;
-  const sizeScale = 0.92 + frac * 0.18; // ~0.92x .. 1.10x
-
-  const transform = `translateX(-50%) translateY(-50%) rotate(${tilt.toFixed(1)}deg) scale(${sizeScale.toFixed(3)})`;
-
-  let marker = S.labelMarkers[side];
-  if (!marker){
-    const icon = L.divIcon({
-      className: '', iconAnchor: [0, 0],
-      html: `<div class="tlbl"></div>`,
-    });
-    marker = L.marker([lat, mapLng(lng)], { icon, zIndexOffset: 800, interactive: false }).addTo(map);
-    S.labelMarkers[side] = marker;
-  }
-  marker.setLatLng([lat, mapLng(lng)]);
-  const inner = marker.getElement()?.querySelector('.tlbl');
-  if (inner){
-    inner.textContent = fmt(display);
-    inner.style.transform = transform;
-  }
+  for (const entry of old) if(!used.has(entry) && map.hasLayer(entry.marker)) map.removeLayer(entry.marker);
+  S.labelMarkers[side]=old.filter(used.has,used);
 }
 
 // ── SMOOTH HUD FRAME ──────────────────────────────────────────────
@@ -2663,6 +2888,7 @@ function smoothFrame(){
   $('pval').textContent = fmt(S.disp.pTroops);
   const pct = Math.min(100, (S.disp.pTroops / pc.max) * 100);
   $('pbar').style.width = pct + '%';
+  updateCoalitionHUD();
 
   const gDate = new Date(C.DATE_START.getTime() + S.simMs * (86_400_000 / C.MS_PER_DAY));
   $('datestr').textContent =
@@ -2717,10 +2943,11 @@ function endGame(won, reason){
 
   // Fade flags, remove troop labels and front line
   for (const side of ['player','enemy'])
-    for (const entry of S.flagPools[side]) fadeOutFlag(entry);
+    for (const pool of Object.values(S.flagPools[side] || {}))
+      for (const entry of pool) fadeOutFlag(entry);
   ['player','enemy'].forEach(side => {
-    const m=S.labelMarkers[side];
-    if(m && map.hasLayer(m)) map.removeLayer(m);
+    const markers=S.labelMarkers[side] || [];
+    for (const m of markers) if(m.marker && map.hasLayer(m.marker)) map.removeLayer(m.marker);
     delete S.labelMarkers[side];
   });
   if(S.frontLineLayer && map.hasLayer(S.frontLineLayer)){
@@ -2754,7 +2981,7 @@ function victorySweep(winner, onComplete){
 
   if (!seed.length){
     // Entire loser territory is disconnected — just take it all at once
-    for (const c of loserSet) c.owner=winner;
+    for (const c of loserSet) setCellOwner(c,winner);
     refreshCells([...loserSet].flatMap(c=>[c,...c.neighbors]));
     onComplete(); return;
   }
@@ -2773,7 +3000,7 @@ function victorySweep(winner, onComplete){
   const msPerLevel=Math.max(30, Math.min(120, 3000/levels.length));
   levels.forEach((level,i)=>{
     setTimeout(()=>{
-      for (const c of level) c.owner=winner;
+      for (const c of level) setCellOwner(c,winner);
       refreshCells(level.flatMap(c=>[c,...c.neighbors]));
       if (i===levels.length-1) onComplete();
     }, i*msPerLevel);
@@ -2786,6 +3013,7 @@ function recordReplaySnapshot(){
   const pc=S.countries[S.pCode], ec=S.countries[S.eCode];
   S.replay.push({
     owners:  S.cells.map(c=>c.owner==='player'?'p':'e'),
+    formations:S.cells.map(c=>c.flagCountry),
     pTroops: (pc?.troops||0)+(S.attackOrder?.commit||0)+(S.moveOrder?.commit||0),
     eTroops: (ec?.troops||0)+(S.enemyAttackOrder?.commit||0),
     pCas:    S.cas.p,
@@ -2828,9 +3056,10 @@ function showReplay(){
   // Clear flag pools so renderFlagsAndLabels() rebuilds them fresh
   // (endGame faded them out; we need a clean slate for replay)
   for (const side of ['player','enemy']){
-    for (const entry of S.flagPools[side])
-      if(entry.marker && map.hasLayer(entry.marker)) map.removeLayer(entry.marker);
-    S.flagPools[side]=[];
+    for (const pool of Object.values(S.flagPools[side] || {}))
+      for (const entry of pool)
+        if(entry.marker && map.hasLayer(entry.marker)) map.removeLayer(entry.marker);
+    S.flagPools[side]={};
   }
   S.labelMarkers={};
 
@@ -2870,8 +3099,10 @@ function setReplaySpeed(s){
 function applyReplaySnapshot(snap){
   if(!snap) return;
   // Apply ownership to all cells
-  for (let i=0;i<S.cells.length;i++)
+  for (let i=0;i<S.cells.length;i++){
     S.cells[i].owner=snap.owners[i]==='p'?'player':'enemy';
+    if (snap.formations?.[i]) S.cells[i].flagCountry=snap.formations[i];
+  }
   // Update country troop counts so drawTroopLabel renders the right numbers
   const pc=S.countries[S.pCode], ec=S.countries[S.eCode];
   if(pc) pc.troops=snap.pTroops;
