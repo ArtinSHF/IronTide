@@ -60,6 +60,9 @@ body{background:#060606;color:#ddd;font-family:'Courier New',monospace}
 /* ═══ GAME ════════════════════════════════════════════════════ */
 #game{position:fixed;inset:0;display:none}
 #map{width:100%;height:100%;background:#000}
+/* A small global reduction gives the map room without changing the HUD's look. */
+#game > :not(#map){zoom:.92}
+#map .leaflet-control{transform:scale(.92);transform-origin:bottom right}
 
 /* ═══ HUD PANELS — compact + readable ═════════════════════════ */
 .panel{
@@ -69,9 +72,10 @@ body{background:#060606;color:#ddd;font-family:'Courier New',monospace}
   box-shadow:0 0 20px rgba(0,0,0,.55)
 }
 
-/* Casualties — top-left (compact) */
-#cas{top:12px;left:12px;padding:9px 13px;min-width:0}
+/* Coalition detail + casualties — top-left (compact) */
+#forces{top:12px;left:12px;padding:9px 13px;min-width:0;max-width:290px}
 #cas h3{font-size:10px;letter-spacing:.22em;color:#c92020;margin-bottom:8px;font-weight:bold}
+#cas{min-width:0}
 .crow{display:flex;align-items:center;gap:9px;margin-bottom:6px}
 .crow:last-child{margin-bottom:0}
 .cico{width:22px;height:15px;flex-shrink:0;display:block;
@@ -196,9 +200,12 @@ body{background:#060606;color:#ddd;font-family:'Courier New',monospace}
      0 0 24px rgba(0,0,0,.9);
   white-space:nowrap;pointer-events:none;
   transform:translateX(-50%) translateY(-50%);
-  transition:transform .3s ease;
+  transition:transform .45s ease;
   line-height:1
 }
+.travelmarker{font:900 10px 'Courier New',monospace;color:#dceaff;white-space:nowrap;
+  padding:5px 7px;border:1px solid #5e8eff;border-radius:12px;background:rgba(5,14,28,.9);
+  box-shadow:0 0 12px rgba(94,142,255,.75);transform:translate(-50%,-50%);pointer-events:none}
 .fico{
   width:22px;height:15px;display:block;
   border:1px solid rgba(0,0,0,.9);
@@ -280,17 +287,20 @@ body{background:#060606;color:#ddd;font-family:'Courier New',monospace}
 <div id="game">
   <div id="map"></div>
 
-  <!-- Casualties — top-left -->
-  <div class="panel" id="cas">
-    <h3>CASUALTIES</h3>
-    <div class="crow">
-      <img class="cico" id="pico" alt="">
-      <div><div class="cnum" id="pcas">0</div><div class="csub">YOUR LOSSES</div></div>
+  <!-- Individual coalition forces and losses — top-left -->
+  <div class="panel" id="forces">
+    <div id="cas">
+      <h3>CASUALTIES</h3>
+      <div class="crow">
+        <img class="cico" id="pico" alt="">
+        <div><div class="cnum" id="pcas">0</div><div class="csub">YOUR LOSSES</div></div>
+      </div>
+      <div class="crow enemy">
+        <img class="cico" id="eico" alt="">
+        <div><div class="cnum" id="ecas">0</div><div class="csub">ENEMY LOSSES</div></div>
+      </div>
     </div>
-    <div class="crow enemy">
-      <img class="cico" id="eico" alt="">
-      <div><div class="cnum" id="ecas">0</div><div class="csub">ENEMY LOSSES</div></div>
-    </div>
+    <div class="coalitionRoster" id="coalitionRoster"></div>
   </div>
 
   <!-- Player info — top-right -->
@@ -303,7 +313,6 @@ body{background:#060606;color:#ddd;font-family:'Courier New',monospace}
     <div class="rlbl" id="allylbl">ALLIANCE: —</div>
     <div class="olbl" id="olbl">NO ACTIVE ORDER</div>
     <div class="olbl" id="ealert" style="display:none;color:#ff9d2b">⚠ ENEMY OFFENSIVE — TROOPS DEFENDING</div>
-    <div class="coalitionRoster" id="coalitionRoster"></div>
   </div>
 
   <!-- Date — top-center -->
@@ -518,6 +527,12 @@ const C = {
   AI_ATTACK_MIN_TROOPS_FRAC: 0.05,  // AI won't attack below 5% of its max strength
   AI_ATTACK_GRACE_MS:        12000, // no AI attacks for the first few seconds
 
+  // ─ long-range invasions ─
+  // Movement uses simulation time so the speed controls apply naturally.
+  INVASION_MIN_TRAVEL_MS:     4500,
+  INVASION_MS_PER_KM:         5.5,
+  INVASION_MAX_TRAVEL_MS:    60000,
+
   // ─ generic ─
   REGEN_MS:     1000,
   // Replacements are deliberately much slower than combat.  A shattered
@@ -605,7 +620,7 @@ const S = {
   cellLayer: null,
 
   // ─ orders (ONLY way combat / movement happens) ─
-  attackOrder: null,      // { lat, lng, commit, marker } — player-issued
+  attackOrder: null,      // { lat, lng, commit, marker, phase? } — player-issued
   moveOrder:   null,      // { lat, lng, expires, marker, commit } — kept for compat
   retreatOrder: null,     // { lat, lng, retreatCells, lineLayer, enemyDirLat, enemyDirLng } — new retreat system
   enemyAttackOrder: null, // { lat, lng, commit, marker, until } — AI-issued
@@ -1084,6 +1099,108 @@ function frontierCellsOf(side){
   return out;
 }
 
+function greatCircleKm(a, b){
+  const rad=Math.PI/180, dLat=(b[0]-a[0])*rad, dLng=lngDelta(b[1],a[1])*rad;
+  const q=Math.sin(dLat/2)**2 + Math.cos(a[0]*rad)*Math.cos(b[0]*rad)*Math.sin(dLng/2)**2;
+  return 6371 * 2 * Math.atan2(Math.sqrt(q), Math.sqrt(1-q));
+}
+// A country is reachable through the normal front system only when that
+// specific country already touches friendly-held ground. Other coalition
+// members do not accidentally make an overseas target an instant attack.
+function needsLongRangeInvasion(target){
+  return !S.cells.some(c => c.owner==='player' && c.neighbors.some(nb =>
+    nb.owner==='enemy' && nb.origCountry===target.origCountry));
+}
+function nearestOwnedCell(side, target){
+  let best=null, bestD=Infinity;
+  for (const c of S.cells){
+    if (c.owner!==side) continue;
+    const d=(c.c[0]-target.c[0])**2 + lngDelta(c.c[1],target.c[1])**2;
+    if(d<bestD){bestD=d;best=c;}
+  }
+  return best;
+}
+function makeTravelMarker(lat, lng){
+  const icon=L.divIcon({className:'',iconAnchor:[0,0],html:'<div class="travelmarker">⇢ FORCE IN TRANSIT</div>'});
+  return L.marker([lat,mapLng(lng)],{icon,zIndexOffset:960,interactive:false}).addTo(map);
+}
+function beginLongRangeInvasion(order, target){
+  const origin=nearestOwnedCell('player',target);
+  if(!origin) return;
+  const distanceKm=greatCircleKm(origin.c,target.c);
+  order.phase='travel';
+  order.targetCell=target;
+  order.origin=[origin.c[0],origin.c[1]];
+  order.travelStartedAt=S.simMs;
+  order.travelDuration=Math.round(clamp(distanceKm*C.INVASION_MS_PER_KM,C.INVASION_MIN_TRAVEL_MS,C.INVASION_MAX_TRAVEL_MS));
+  order.travelDistanceKm=distanceKm;
+  order.travelMarker=makeTravelMarker(origin.c[0],origin.c[1]);
+}
+function advancePlayerInvasion(){
+  const order=S.attackOrder;
+  if(!order || order.phase!=='travel') return;
+  const p=clamp((S.simMs-order.travelStartedAt)/order.travelDuration,0,1);
+  const lat=order.origin[0]+(order.lat-order.origin[0])*p;
+  const lng=order.origin[1]+lngDelta(order.lng,order.origin[1])*p;
+  if(order.travelMarker) order.travelMarker.setLatLng([lat,mapLng(lng)]);
+  if(p<1) return;
+  if(order.travelMarker && map.hasLayer(order.travelMarker)) map.removeLayer(order.travelMarker);
+  delete order.travelMarker;
+  order.phase='combat';
+  const landing=order.targetCell;
+  if(landing?.owner==='enemy'){
+    setCellOwner(landing,'player');
+    refreshCells([landing,...landing.neighbors]);
+    recountCells();
+    checkWin();
+  }
+}
+function closestLandingTarget(attackerSide, defenderSide){
+  let target=null, origin=null, best=Infinity;
+  for(const candidate of S.cells){
+    if(candidate.owner!==defenderSide) continue;
+    const from=nearestOwnedCell(attackerSide,candidate);
+    if(!from) continue;
+    const d=(from.c[0]-candidate.c[0])**2 + lngDelta(from.c[1],candidate.c[1])**2;
+    if(d<best){best=d;target=candidate;origin=from;}
+  }
+  return target ? {target,origin} : null;
+}
+function beginEnemyLongRangeInvasion(commit){
+  const route=closestLandingTarget('enemy','player');
+  if(!route) return false;
+  const icon=L.divIcon({className:'',iconAnchor:[0,0],html:'<div class="enemyfocusring"></div>'});
+  const marker=L.marker([route.target.c[0],mapLng(route.target.c[1])],{icon,zIndexOffset:950,interactive:false}).addTo(map);
+  const distanceKm=greatCircleKm(route.origin.c,route.target.c);
+  S.enemyAttackOrder={
+    lat:route.target.c[0],lng:route.target.c[1],commit,marker,phase:'travel',targetCell:route.target,
+    origin:[route.origin.c[0],route.origin.c[1]],travelStartedAt:S.simMs,
+    travelDuration:Math.round(clamp(distanceKm*C.INVASION_MS_PER_KM,C.INVASION_MIN_TRAVEL_MS,C.INVASION_MAX_TRAVEL_MS)),
+    travelMarker:makeTravelMarker(route.origin.c[0],route.origin.c[1]),
+    until:S.simMs+C.AI_ATTACK_MAX_DURATION_MS+C.INVASION_MAX_TRAVEL_MS,
+  };
+  return true;
+}
+function advanceEnemyInvasion(){
+  const order=S.enemyAttackOrder;
+  if(!order || order.phase!=='travel') return;
+  const p=clamp((S.simMs-order.travelStartedAt)/order.travelDuration,0,1);
+  const lat=order.origin[0]+(order.lat-order.origin[0])*p;
+  const lng=order.origin[1]+lngDelta(order.lng,order.origin[1])*p;
+  if(order.travelMarker) order.travelMarker.setLatLng([lat,mapLng(lng)]);
+  if(p<1) return;
+  if(order.travelMarker && map.hasLayer(order.travelMarker)) map.removeLayer(order.travelMarker);
+  delete order.travelMarker;
+  order.phase='combat';
+  const landing=order.targetCell;
+  if(landing?.owner==='player'){
+    setCellOwner(landing,'enemy');
+    refreshCells([landing,...landing.neighbors]);
+    recountCells();
+    checkWin();
+  }
+}
+
 function mergeFeatures(members){
   const polygons = [];
   let wraps = false;
@@ -1436,6 +1553,9 @@ function confirmAction(){
       // change attack power mid-battle by issuing a new order.
       S.attackOrder.intensityFrac = pct;
       if (S.attackOrder.marker) S.attackOrder.marker.setLatLng([S.pending.lat, mapLng(S.pending.lng)]);
+      // Reinforcements join a force already in transit; a redirected convoy
+      // continues from its original departure point instead of teleporting.
+      if (S.attackOrder.phase==='travel') S.attackOrder.targetCell=nearestAnyCell([S.pending.lat,S.pending.lng]);
     } else {
       const icon = L.divIcon({
         className:'', iconAnchor:[0,0],
@@ -1451,6 +1571,8 @@ function confirmAction(){
         // committing 1% genuinely feels weaker than committing 99%.
         intensityFrac: pct,
       };
+      const target=nearestAnyCell([S.pending.lat,S.pending.lng]);
+      if(target && needsLongRangeInvasion(target)) beginLongRangeInvasion(S.attackOrder,target);
     }
   } else {
     // RETREAT ORDER — cancel any active attack. No troops are deducted;
@@ -1478,6 +1600,8 @@ function clearAttackOrder(refund){
   }
   if (S.attackOrder.marker && map.hasLayer(S.attackOrder.marker))
     map.removeLayer(S.attackOrder.marker);
+  if (S.attackOrder.travelMarker && map.hasLayer(S.attackOrder.travelMarker))
+    map.removeLayer(S.attackOrder.travelMarker);
   S.attackOrder = null;
 }
 function clearMoveOrder(){
@@ -1543,6 +1667,8 @@ function clearEnemyAttackOrder(refund){
   }
   if (S.enemyAttackOrder.marker && map.hasLayer(S.enemyAttackOrder.marker))
     map.removeLayer(S.enemyAttackOrder.marker);
+  if (S.enemyAttackOrder.travelMarker && map.hasLayer(S.enemyAttackOrder.travelMarker))
+    map.removeLayer(S.enemyAttackOrder.travelMarker);
   S.enemyAttackOrder = null;
 }
 
@@ -1796,7 +1922,12 @@ function cancelOrder(){
 function refreshOrderHUD(){
   const o = $('olbl'), btn = $('cancelbtn');
   if (S.attackOrder){
-    o.textContent = `▶ ATTACK ORDER · ${fmt(S.attackOrder.commit)} committed`;
+    if(S.attackOrder.phase==='travel'){
+      const left=Math.max(0,Math.ceil((S.attackOrder.travelDuration-(S.simMs-S.attackOrder.travelStartedAt))/1000));
+      o.textContent = `⇢ INVASION EN ROUTE · ${left}s · ${fmt(S.attackOrder.commit)}`;
+    } else {
+      o.textContent = `▶ ATTACK ORDER · ${fmt(S.attackOrder.commit)} committed`;
+    }
     o.style.color = '#ff8080';
     btn.style.display = 'inline-block';
   } else if (S.retreatOrder){
@@ -1852,7 +1983,14 @@ function maybeStartAIAttack(){
   if (!ec || !pc || ec.troops < ec.max * C.AI_ATTACK_MIN_TROOPS_FRAC) return;
 
   const fronts = frontierCellsOf('enemy');
-  if (!fronts.length) return;
+  // A separated coalition has no adjacent cells yet. The AI uses the same
+  // travel-and-landing rule as the player instead of becoming permanently idle.
+  if (!fronts.length){
+    const commit=Math.max(500,Math.floor(ec.troops*0.18));
+    ec.troops-=commit;
+    if(!beginEnemyLongRangeInvasion(commit)) ec.troops+=commit;
+    return;
+  }
 
   // Strategic AI: measure readiness, territory, and front density before it
   // spends a force.  A country fighting a long front with a depleted army
@@ -1916,6 +2054,10 @@ function combatTick(){
   if (S.over) return;
   const pc = S.countries[S.pCode], ec = S.countries[S.eCode];
 
+  // Overseas forces do not participate until the convoy reaches its target.
+  advancePlayerInvasion();
+  advanceEnemyInvasion();
+
   // Expire the move order naturally after some time; mustered troops
   // return to the country pool.
   if (S.moveOrder && Date.now() > S.moveOrder.expires){
@@ -1946,13 +2088,13 @@ function combatTick(){
   const changed = [];
 
   // ── Player-ordered offensive + automatic enemy defense ─────────
-  if (S.attackOrder && S.attackOrder.commit > 0 && ec.troops > 0){
+  if (S.attackOrder && S.attackOrder.phase!=='travel' && S.attackOrder.commit > 0 && ec.troops > 0){
     const pFronts = frontierCellsOf('player');
     if (pFronts.length){
       runPlayerPush({ attackerCountry: pc, defenderCountry: ec, frontiers: pFronts, changed });
     }
   }
-  if (S.attackOrder && ec.troops > 0){
+  if (S.attackOrder && S.attackOrder.phase!=='travel' && ec.troops > 0){
     const eFronts = frontierCellsOf('enemy');
     if (eFronts.length){
       runEnemyCounter({ attackerCountry: ec, defenderCountry: pc, frontiers: eFronts, changed });
@@ -1960,13 +2102,13 @@ function combatTick(){
   }
 
   // ── AI-ordered offensive + automatic player defense ────────────
-  if (S.enemyAttackOrder && S.enemyAttackOrder.commit > 0 && effectiveTroops('player') > 0){
+  if (S.enemyAttackOrder && S.enemyAttackOrder.phase!=='travel' && S.enemyAttackOrder.commit > 0 && effectiveTroops('player') > 0){
     const eFronts2 = frontierCellsOf('enemy');
     if (eFronts2.length){
       runEnemyPush({ attackerCountry: ec, defenderCountry: pc, frontiers: eFronts2, changed });
     }
   }
-  if (S.enemyAttackOrder && effectiveTroops('player') > 0){
+  if (S.enemyAttackOrder && S.enemyAttackOrder.phase!=='travel' && effectiveTroops('player') > 0){
     const pFronts2 = frontierCellsOf('player');
     if (pFronts2.length){
       runPlayerAutoDefense({ ec, pc, frontiers: pFronts2, changed });
@@ -2811,7 +2953,9 @@ function frontComponents(side){
   // or a one-cell pocket from creating visual noise, while disconnected major
   // theatres naturally receive separate formations.
   const largest=Math.max(1,...groups.map(g=>g.length));
-  return groups.filter(g=>g.length>=Math.max(3,largest*0.08)).sort((a,b)=>b.length-a.length).slice(0,4);
+  // A theatre has to be substantial before it earns another number. This
+  // avoids turning one broken-up front into a field of floating arithmetic.
+  return groups.filter(g=>g.length>=Math.max(8,largest*0.28)).sort((a,b)=>b.length-a.length).slice(0,2);
 }
 function labelAnchor(side, group, cells){
   let lat=0,lng=0;
@@ -2841,7 +2985,7 @@ function drawTroopLabel(side){
     const anchor=labelAnchor(side,group,cells);
     const share=groups.length===1 ? total : total*(group.length/Math.max(1,totalFront));
     const dir=neighborEnemyDirection(anchor,side)||nearestEnemyDirection(anchor.c[0],anchor.c[1],side);
-    return { cell:anchor, display:share, tilt:dir?facingTilt(bearingOf(dir,anchor.c[0]),42):0 };
+    return { group, cell:anchor, display:share, tilt:dir?facingTilt(bearingOf(dir,anchor.c[0]),24):0 };
   });
   const used=new Set();
   for (const target of targets){
@@ -2856,13 +3000,22 @@ function drawTroopLabel(side){
       entry={ marker:L.marker([target.cell.c[0],mapLng(target.cell.c[1])],{icon,zIndexOffset:800,interactive:false}).addTo(map) };
       old.push(entry);
     }
-    used.add(entry); entry.lat=target.cell.c[0]; entry.lng=target.cell.c[1];
+    // Hold an existing anchor while it remains on our side and near the same
+    // theatre. The front can jitter by a cell every combat tick; labels should
+    // not chase that jitter or hop between neighbouring sectors.
+    let anchor=target.cell;
+    if(entry.cell && entry.cell.owner===side){
+      const lockRadius=Math.max(S.cellSide*8,1.2), lockSq=lockRadius*lockRadius;
+      if(target.group.some(c => (c.c[0]-entry.cell.c[0])**2 + (c.c[1]-entry.cell.c[1])**2 <= lockSq)) anchor=entry.cell;
+    }
+    used.add(entry); entry.cell=anchor; entry.lat=anchor.c[0]; entry.lng=anchor.c[1];
     entry.marker.setLatLng([entry.lat,mapLng(entry.lng)]);
     const frac=ctry.max?clamp(target.display/ctry.max,0,1):0;
     const inner=entry.marker.getElement()?.querySelector('.tlbl');
     if(inner){
+      entry.tilt=entry.tilt==null ? target.tilt : lerp(entry.tilt,target.tilt,0.18);
       inner.textContent=fmt(target.display);
-      inner.style.transform=`translateX(-50%) translateY(-50%) rotate(${target.tilt.toFixed(1)}deg) scale(${(0.82+frac*0.16).toFixed(3)})`;
+      inner.style.transform=`translateX(-50%) translateY(-50%) rotate(${entry.tilt.toFixed(1)}deg) scale(${(0.82+frac*0.16).toFixed(3)})`;
     }
   }
   for (const entry of old) if(!used.has(entry) && map.hasLayer(entry.marker)) map.removeLayer(entry.marker);
@@ -2929,11 +3082,11 @@ function endGame(won, reason){
      <img src="${ec.flagUrl}" alt=""> Enemy casualties: ${fmt(S.cas.e)}<br>
      <span style="color:#888">${reasonStr} · War lasted ${daysElapsed} days</span>`;
 
-  // Fade HUD out. #cas and #vidwrap are preserved — replay will re-show them.
+  // Fade HUD out. #forces and #vidwrap are preserved — replay will re-show them.
   ['info','datepanel','ctrl'].forEach(id => {
     const el=$(id); if(el){ el.style.transition='opacity .5s'; el.style.opacity='0'; }
   });
-  const casEl=$('cas'), vwEl=$('vidwrap');
+  const casEl=$('forces'), vwEl=$('vidwrap');
   if(casEl){ casEl.style.transition='opacity .5s'; casEl.style.opacity='0'; }
   if(vwEl) { vwEl.style.transition='opacity .5s';  vwEl.style.opacity='0'; }
 
@@ -3031,8 +3184,8 @@ function showReplay(){
   $('end').style.display='none';
   $('replayOverlay').style.display='block';
 
-  // Re-show casualties panel and video overlay
-  const casEl=$('cas'), vwEl=$('vidwrap');
+  // Re-show coalition detail and video overlay
+  const casEl=$('forces'), vwEl=$('vidwrap');
   if(casEl){ casEl.style.display=''; casEl.style.opacity='1'; }
   if(vwEl) { vwEl.style.display='';  vwEl.style.opacity='1'; }
 
@@ -3077,8 +3230,8 @@ function closeReplay(){
   if(vidEl){ vidEl.pause(); vidEl.loop=false; }
   if(vwEl)  vwEl.style.display='none';
 
-  // Hide casualties panel
-  const casEl=$('cas');
+  // Hide coalition detail
+  const casEl=$('forces');
   if(casEl) casEl.style.display='none';
 
   $('replayOverlay').style.display='none';
