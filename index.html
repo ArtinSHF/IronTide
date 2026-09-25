@@ -116,6 +116,10 @@ body{background:#060606;color:#ddd;font-family:'Courier New',monospace}
   letter-spacing:.12em;cursor:pointer;transition:all .15s
 }
 .cbtn:hover{border-color:#c92020;color:#fff}
+.cbtn:disabled{opacity:.4;cursor:not-allowed}
+.cbtn:disabled:hover{border-color:#333;color:#aaa;background:#101010}
+#forcebtn.ready{border-color:#22cc55;color:#22cc55}
+#forcebtn.ready:hover{background:#22cc55;color:#000}
 .cbtn.on{background:#c92020;color:#fff;border-color:#c92020}
 .csep{width:1px;height:12px;background:#333}
 .spdlbl{font-size:9px;color:#888;letter-spacing:.18em}
@@ -328,6 +332,8 @@ body{background:#060606;color:#ddd;font-family:'Courier New',monospace}
     <div class="csep"></div>
     <button class="cbtn" id="cancelbtn" onclick="cancelOrder()">✕ STAND DOWN</button>
     <div class="csep"></div>
+    <button class="cbtn" id="peacebtn" onclick="whitePeace()" title="End the war with no winner — territory stays as-is">🕊 WHITE PEACE</button>
+    <button class="cbtn" id="forcebtn" onclick="forcePeace()" disabled title="Requires control of 95% of enemy territory">🏆 FORCE PEACE</button>
     <button class="cbtn" id="surrenderbtn" onclick="surrender()">⚫ SURRENDER</button>
   </div>
 
@@ -498,6 +504,14 @@ const C = {
   COMBAT_RATIO_MAX:        3.20,   // raised: 2.5× advantage now gives a clear edge
   COMBAT_RATIO_POW:        2.2,   // higher = punishes being outnumbered harder
   COMBAT_BUDGET_FLOOR:     0.12,  // weak side also gets fewer attempts per tick, not just lower odds
+
+  // ── attacker / defender casualty modifiers ─
+  // Deliberately small but real: attacking bleeds ~10% more, defending ~10% less.
+  ATK_CAS_MULT: 1.10,
+  DEF_CAS_MULT: 0.90,
+
+  // ── war-ending thresholds ─
+  FORCE_PEACE_TERRITORY: 0.95,  // hold ≥95% of enemy coalition land to force a victorious peace
 
   // ─ retreat / move orders ─
   MOVE_ORDER_COMMIT_PCT:   0.6,   // fixed share of troops that muster on retreat (no slider)
@@ -973,9 +987,20 @@ function buildCellGrid(){
   const w = maxX - minX, h = maxY - minY;
   // Land typically fills <40% of the union bbox, so over-shoot the
   // target count to land near CELL_TARGET *land* cells.
-  let side = Math.sqrt((w * h) / (C.CELL_TARGET * 2.6));
-  side = clamp(side, C.CELL_MIN, C.CELL_MAX);
+  let side = clamp(Math.sqrt((w * h) / (C.CELL_TARGET * 2.6)), C.CELL_MIN, C.CELL_MAX);
 
+  // Small matchups (tiny countries / island pairs) would otherwise produce
+  // only a handful of cells. Guarantee a sensible minimum (~48 total
+  // territory cells — only some of which ever become border/front cells)
+  // by rebuilding on a finer grid when a pass comes up short.
+  for (let attempt = 0; attempt < 4; attempt++){
+    buildGridPass(minX, minY, w, h, side, pMembers, eMembers);
+    if (S.cells.length >= 48 || side <= C.CELL_MIN * 1.001) break;
+    side = Math.max(C.CELL_MIN, side * 0.7);
+  }
+}
+
+function buildGridPass(minX, minY, w, h, side, pMembers, eMembers){
   const nX = Math.ceil(w / side);
   const nY = Math.ceil(h / side);
   const dx = w / nX, dy = h / nY;
@@ -1086,6 +1111,7 @@ function recountCells(){
     if (cell.owner === 'enemy' ) eOwned++;
   }
   S.cellsP = pOwned; S.cellsE = eOwned;
+  updatePeaceButtons();
 }
 
 function frontierCellsOf(side){
@@ -1802,10 +1828,10 @@ function retreatTick(){
     changed.push(c);
     for (const nb of c.neighbors) changed.push(nb);
 
-    // Retreating player: barely any casualties.
-    const pLoss = pc.max * 0.0000056 * (0.4 + Math.random() * 0.6);
-    // Enemy advancing into contested ground: heavy toll.
-    const eLoss = ec.max * 0.000098  * (0.7 + Math.random() * 0.6);
+    // Retreating player: barely any casualties (defender modifier applies).
+    const pLoss = pc.max * 0.0000056 * (0.4 + Math.random() * 0.6) * C.DEF_CAS_MULT;
+    // Enemy advancing into contested ground: heavy toll (attacker modifier).
+    const eLoss = ec.max * 0.000098  * (0.7 + Math.random() * 0.6) * C.ATK_CAS_MULT;
     const pActual=applyFactionLoss(pc, pLoss, withdrawingFormation);
     const eActual=applyFactionLoss(ec, eLoss, formationForCapture(c, 'enemy'));
     S.cas.p += pActual;
@@ -1909,8 +1935,8 @@ function enemyRetreatTick(){
     setCellOwner(c, 'player');
     changed.push(c);
     for (const nb of c.neighbors) changed.push(nb);
-    const eLoss = ec.max * 0.0000056 * (0.4 + Math.random() * 0.6);
-    const pLoss = pc.max * 0.000098  * (0.7 + Math.random() * 0.6);
+    const eLoss = ec.max * 0.0000056 * (0.4 + Math.random() * 0.6) * C.DEF_CAS_MULT;
+    const pLoss = pc.max * 0.000098  * (0.7 + Math.random() * 0.6) * C.ATK_CAS_MULT;
     const eActual=applyFactionLoss(ec, eLoss, withdrawingFormation);
     const pActual=applyFactionLoss(pc, pLoss, formationForCapture(c, 'player'));
     S.cas.e += eActual; S.cas.p += pActual;
@@ -2255,8 +2281,8 @@ function runPlayerPush({ attackerCountry, defenderCountry, frontiers, changed })
     // regardless of whether it's a 500K or 20M-troop matchup.
     const troopsPerFlip = Math.max(50, Math.floor(attackerCountry.max * C.TROOPS_PER_FLIP_FRAC));
     const atkSpend = troopsPerFlip;
-    const atkLoss  = attackerCountry.max * C.ATTACKER_LOSS_FRAC * (0.6 + Math.random()*0.8);
-    const defLoss  = defenderCountry.max * C.DEFENDER_LOSS_FRAC * (0.6 + Math.random()*0.8);
+    const atkLoss  = attackerCountry.max * C.ATTACKER_LOSS_FRAC * (0.6 + Math.random()*0.8) * C.ATK_CAS_MULT;
+    const defLoss  = defenderCountry.max * C.DEFENDER_LOSS_FRAC * (0.6 + Math.random()*0.8) * C.DEF_CAS_MULT;
 
     order.commit = Math.max(0, order.commit - atkSpend);
     const atkActual=applyFactionLoss(attackerCountry, atkLoss, cand.from.flagCountry);
@@ -2337,8 +2363,8 @@ function runEnemyCounter({ attackerCountry, defenderCountry, frontiers, changed 
     const defenderFormation=cell.flagCountry;
     setCellOwner(cell, 'enemy', cand.from);
 
-    const atkLoss = attackerCountry.max * C.COUNTER_LOSS_FRAC   * (0.5 + Math.random()*0.9);
-    const defLoss = defenderCountry.max * C.ATTACKER_LOSS_FRAC  * (0.5 + Math.random()*0.9);
+    const atkLoss = attackerCountry.max * C.COUNTER_LOSS_FRAC   * (0.5 + Math.random()*0.9) * C.ATK_CAS_MULT;
+    const defLoss = defenderCountry.max * C.ATTACKER_LOSS_FRAC  * (0.5 + Math.random()*0.9) * C.DEF_CAS_MULT;
 
     const atkActual=applyFactionLoss(attackerCountry, atkLoss, cand.from.flagCountry);
     const defActual=applyFactionLoss(defenderCountry, defLoss, defenderFormation);
@@ -2409,8 +2435,8 @@ function runEnemyPush({ attackerCountry, defenderCountry, frontiers, changed }){
     const defenderFormation=cell.flagCountry;
     setCellOwner(cell, 'enemy', cand.from);
 
-    const atkLoss = attackerCountry.max * C.ATTACKER_LOSS_FRAC * (0.6 + Math.random()*0.8);
-    const defLoss = defenderCountry.max * C.DEFENDER_LOSS_FRAC * (0.6 + Math.random()*0.8);
+    const atkLoss = attackerCountry.max * C.ATTACKER_LOSS_FRAC * (0.6 + Math.random()*0.8) * C.ATK_CAS_MULT;
+    const defLoss = defenderCountry.max * C.DEFENDER_LOSS_FRAC * (0.6 + Math.random()*0.8) * C.DEF_CAS_MULT;
 
     order.commit = Math.max(0, order.commit - troopsPerFlipE);
     const atkActual=applyFactionLoss(attackerCountry, atkLoss, cand.from.flagCountry);
@@ -2472,8 +2498,8 @@ function runPlayerAutoDefense({ ec, pc, frontiers, changed }){
     const defenderFormation=cell.flagCountry;
     setCellOwner(cell, 'player', cand.from);
 
-    const atkLoss = pc.max * C.COUNTER_LOSS_FRAC  * (0.5 + Math.random()*0.9);
-    const defLoss = ec.max * C.ATTACKER_LOSS_FRAC * (0.5 + Math.random()*0.9);
+    const atkLoss = pc.max * C.COUNTER_LOSS_FRAC  * (0.5 + Math.random()*0.9) * C.ATK_CAS_MULT;
+    const defLoss = ec.max * C.ATTACKER_LOSS_FRAC * (0.5 + Math.random()*0.9) * C.DEF_CAS_MULT;
 
     const atkActual=applyFactionLoss(pc, atkLoss, cand.from.flagCountry);
     const defActual=applyFactionLoss(ec, defLoss, defenderFormation);
@@ -2685,6 +2711,35 @@ function sampleEvenlyCells(cells, count){
   return out;
 }
 
+// Farthest-point sampling: repeatedly pick the cell farthest from everything
+// already chosen. Unlike 1-axis binning this spreads picks evenly across a
+// 2D area in a stable, deterministic way — the fix for flags piling onto
+// one spot when the front gets crowded. O(count × cells), cheap at our sizes.
+function spreadSampleCells(cells, count){
+  if (count <= 0 || !cells.length) return [];
+  if (count >= cells.length) return cells.slice();
+  // Deterministic seed: the cell nearest the centroid.
+  let cLat=0, cLng=0;
+  for (const c of cells){ cLat+=c.c[0]; cLng+=c.c[1]; }
+  cLat/=cells.length; cLng/=cells.length;
+  let first=null, bestD=Infinity;
+  for (const c of cells){ const d=(c.c[0]-cLat)**2+(c.c[1]-cLng)**2; if(d<bestD){bestD=d;first=c;} }
+  const picked=[first], rest=new Set(cells);
+  rest.delete(first);
+  const minDist=new Map();
+  for (const c of rest) minDist.set(c,(c.c[0]-first.c[0])**2+(c.c[1]-first.c[1])**2);
+  while (picked.length<count && rest.size){
+    let best=null, bd=-1;
+    for (const c of rest){ const d=minDist.get(c); if(d>bd){bd=d;best=c;} }
+    picked.push(best); rest.delete(best);
+    for (const c of rest){
+      const d=(c.c[0]-best.c[0])**2+(c.c[1]-best.c[1])**2;
+      if(d<minDist.get(c)) minDist.set(c,d);
+    }
+  }
+  return picked;
+}
+
 // Nudge a border-flag point back from the immediate front line, toward
 // its own side, so friendly and enemy flags don't sit on top of each
 // other right at the border.  The inset is capped at 0.38 × cellSide
@@ -2766,12 +2821,14 @@ function computeFlagTargets(side, country){
     borderCount = remaining - interiorCount;
   }
 
-  const borderCells = sampleEvenlyCells(fronts, borderCount);
-  // If the frontier itself is too narrow to physically fit every desired
-  // border flag, don't just drop the shortfall — let it spill over into
-  // extra interior flags so the total still matches the density formula.
-  const shortfall = Math.max(0, borderCount - borderCells.length);
-  const interiorPicks = sampleEvenlyCells(interiorCells, Math.min(interiorCount + shortfall, interiorCells.length));
+  // Prioritise the active front, but with breathing room: the front hosts
+  // at most ~1 flag per 2 border cells (farthest-point sampling spreads
+  // them along the whole line). Whatever doesn't fit spills into the
+  // interior — spread across the entire territory instead of piling up.
+  const frontCapacity = fronts.length ? Math.max(1, Math.ceil(fronts.length * 0.5)) : 0;
+  const borderCells = spreadSampleCells(fronts, Math.min(borderCount, frontCapacity));
+  const interiorGoal = Math.min(remaining - borderCells.length, interiorCells.length);
+  const interiorPicks = spreadSampleCells(interiorCells, Math.max(0, interiorGoal));
 
   const pts = [];
   for (const c of borderCells) pts.push(insetFromBorder(c, side));
@@ -2993,7 +3050,10 @@ function frontComponents(side){
   // number when they are material, while tiny one-cell pockets stay quiet.
   // The modest relative threshold still permits four real fronts to display.
   const total=groups.reduce((n,g)=>n+g.length,0);
-  const material=groups.filter(g=>g.length>=Math.max(40,Math.ceil(total*0.08)))
+  // "Material" scales with the theatre: a small battlefield (a few dozen
+  // total front cells) still gets its labels, big wars keep the 40-cell cap.
+  const materialFloor=Math.min(40, Math.max(4, Math.ceil(total*0.08)));
+  const material=groups.filter(g=>g.length>=materialFloor)
     .sort((a,b)=>b.length-a.length).slice(0,4);
   material.frontWeight=total;
   return material;
@@ -3106,6 +3166,37 @@ function surrender(){
   endGame(false, 'surrender');
 }
 
+// 🕊 WHITE PEACE — end the war immediately, no winner, map left exactly as-is.
+function whitePeace(){
+  if (S.over) return;
+  endGame('draw', 'whitepeace');
+}
+
+// 🏆 FORCE PEACE — available once the player's side controls ≥95% of the
+// enemy coalition's original territory, so you never have to hunt down one
+// microscopic island holding 0.00001% of their land to finish the war.
+function forcePeaceEligible(){
+  const ec = S.countries[S.eCode];
+  if (!ec || !ec.cellsOrigTotal) return false;
+  return (ec.cellsHeld / ec.cellsOrigTotal) <= (1 - C.FORCE_PEACE_TERRITORY);
+}
+function forcePeace(){
+  if (S.over || !forcePeaceEligible()) return;
+  endGame(true, 'forced');
+}
+function updatePeaceButtons(){
+  const btn = $('forcebtn');
+  if (!btn) return;
+  const ok = !S.over && forcePeaceEligible();
+  btn.disabled = !ok;
+  btn.classList.toggle('ready', ok);
+  const ec = S.countries[S.eCode];
+  const heldPct = ec?.cellsOrigTotal ? Math.round((1 - ec.cellsHeld / ec.cellsOrigTotal) * 100) : 0;
+  btn.title = ok
+    ? 'End the war now as a victory'
+    : `Requires control of ${Math.round(C.FORCE_PEACE_TERRITORY * 100)}% of enemy territory (currently ${heldPct}%)`;
+}
+
 function endGame(won, reason){
   S.over = true;
   if (S.audio) S.audio.pause();
@@ -3115,11 +3206,14 @@ function endGame(won, reason){
   recordReplaySnapshot(); // capture final state
 
   const pc = S.countries[S.pCode], ec = S.countries[S.eCode];
-  $('etitle').textContent = won ? '⚔ VICTORY' : '💀 DEFEAT';
-  $('etitle').style.color = won ? '#22cc55' : '#c92020';
+  const isDraw = won === 'draw';
+  $('etitle').textContent = isDraw ? '🕊 WHITE PEACE' : won ? '⚔ VICTORY' : '💀 DEFEAT';
+  $('etitle').style.color = isDraw ? '#cfd4da' : won ? '#22cc55' : '#c92020';
   const reasonStr = {
-    overrun:   'Front line collapsed — territory fully occupied',
-    surrender: 'You surrendered',
+    overrun:    'Front line collapsed — territory fully occupied',
+    surrender:  'You surrendered',
+    whitepeace: 'Nobody won — the war ends with the front line where it stands',
+    forced:     `Forced peace — enemy coalition capitulated (≥${Math.round(C.FORCE_PEACE_TERRITORY * 100)}% occupied)`,
   }[reason] || '';
   const daysElapsed = Math.floor(S.simMs / C.MS_PER_DAY);
   $('estats').innerHTML =
@@ -3152,8 +3246,9 @@ function endGame(won, reason){
     map.removeLayer(S.frontLineLayer); S.frontLineLayer=null;
   }
 
-  // Victory sweep → 1.5 s pause → end screen
-  victorySweep(won ? 'player' : 'enemy', () => {
+  // Victory sweep → 1.5 s pause → end screen.
+  // A white peace skips the sweep entirely: nobody won, the map stays as-is.
+  const showEndScreen = () => {
     setTimeout(() => {
       ['info','datepanel','ctrl'].forEach(id => {
         const el=$(id); if(el){ el.style.transition=''; el.style.opacity=''; el.style.display='none'; }
@@ -3162,7 +3257,9 @@ function endGame(won, reason){
       if(vwEl) { vwEl.style.transition='';  vwEl.style.opacity='';  vwEl.style.display='none'; }
       $('end').style.display='flex';
     }, 1500);
-  });
+  };
+  if (isDraw) showEndScreen();
+  else victorySweep(won ? 'player' : 'enemy', showEndScreen);
 }
 
 // ── VICTORY SWEEP ─────────────────────────────────────────────────
@@ -3609,5 +3706,6 @@ function startLoops() {
 boot();
 </script>
 <script defer src="https://static.cloudflareinsights.com/beacon.min.js/v833ccba57c9e4d2798f2e76cebdd09a11778172276447" integrity="sha512-57MDmcccJXYtNnH+ZiBwzC4jb2rvgVCEokYN+L/nLlmO8rfYT/gIpW2A569iJ/3b+0UEasghjuZH/ma3wIs/EQ==" data-cf-beacon='{"version":"2024.11.0","token":"4edd5f8ec12a48cfa682ab8261b80a79","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
+<script type="module" src="https://static.cloudflareinsights.com/beacon.min.js/v31edd6df95cf4e85bb4c19e7a9bdbcba1788362987495" integrity="sha512-iIg7k2xntmwu6/uSb5tpc/hySgZc4eoL31yB29W6tJFo2akwjPWcEqnCEdJvGexCL0KEQwVYv5BlowfhVz26hg==" data-cf-beacon='{"version":"2024.11.0","token":"4edd5f8ec12a48cfa682ab8261b80a79","spa":2}' crossorigin="anonymous"></script>
 </body>
 </html>
