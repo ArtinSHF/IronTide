@@ -75,6 +75,7 @@ body{background:#060606;color:#ddd;font-family:'Courier New',monospace}
 /* Casualties — top-left (compact) */
 #cas{top:12px;left:12px;padding:9px 13px;min-width:0}
 #cas h3{font-size:10px;letter-spacing:.22em;color:#c92020;margin-bottom:8px;font-weight:bold}
+#cas .coalitionRoster{max-height:32vh}
 .crow{display:flex;align-items:center;gap:9px;margin-bottom:6px}
 .crow:last-child{margin-bottom:0}
 .cico{width:22px;height:15px;flex-shrink:0;display:block;
@@ -297,6 +298,7 @@ body{background:#060606;color:#ddd;font-family:'Courier New',monospace}
       <img class="cico" id="eico" alt="">
       <div><div class="cnum" id="ecas">0</div><div class="csub">ENEMY LOSSES</div></div>
     </div>
+    <div class="coalitionRoster" id="lossRoster"></div>
   </div>
 
   <!-- Player info — top-right -->
@@ -1294,24 +1296,33 @@ function addFactionReplacements(faction, requested){
 }
 
 function buildCoalitionHUD(){
-  const host=$('coalitionRoster');
-  if (!host) return;
-  host.innerHTML=''; S.memberRows={};
+  const host=$('coalitionRoster'), lossHost=$('lossRoster');
+  if (!host || !lossHost) return;
+  host.innerHTML=''; lossHost.innerHTML=''; S.memberRows={}; S.lossRows={};
   for (const [side, code] of [['player',S.pCode],['enemy',S.eCode]]){
     const faction=S.countries[code]; if (!faction) continue;
     const head=document.createElement('div');
     head.className=`coalitionHead ${side}`;
-    head.textContent=side==='player' ? `${faction.name.toUpperCase()} COALITION` : `${faction.name.toUpperCase()} COALITION`;
+    head.textContent=`${faction.name.toUpperCase()} FORCES`;
     host.appendChild(head);
+    const lossHead=document.createElement('div');
+    lossHead.className=`coalitionHead ${side}`;
+    lossHead.textContent=`${faction.name.toUpperCase()} LOSSES`;
+    lossHost.appendChild(lossHead);
     for (const member of faction.members){
       const country=S.countries[member], stat=faction.memberStats[member];
       if (!country || !stat) continue;
       const row=document.createElement('div');
       const isMain=faction.primaryMembers.includes(member);
       row.className=`coalitionRow ${side} ${isMain?'main':''}`;
-      row.innerHTML=`<img src="${country.flagUrl}" alt=""><span class="nation">${isMain?'MAIN · ':''}${country.name}</span><span class="numbers"><b>—</b><small>—</small></span>`;
+      row.innerHTML=`<img src="${country.flagUrl}" alt=""><span class="nation">${isMain?'MAIN · ':''}${country.name}</span><span class="numbers"><b>—</b></span>`;
       host.appendChild(row);
-      S.memberRows[member]={ force:row.querySelector('b'), loss:row.querySelector('small') };
+      S.memberRows[member]={ force:row.querySelector('b') };
+      const lossRow=document.createElement('div');
+      lossRow.className=`coalitionRow ${side} ${isMain?'main':''}`;
+      lossRow.innerHTML=`<img src="${country.flagUrl}" alt=""><span class="nation">${isMain?'MAIN · ':''}${country.name}</span><span class="numbers"><b>LOSS —</b></span>`;
+      lossHost.appendChild(lossRow);
+      S.lossRows[member]={ loss:lossRow.querySelector('b') };
     }
   }
   updateCoalitionHUD();
@@ -1320,9 +1331,9 @@ function updateCoalitionHUD(){
   for (const code of [S.pCode,S.eCode]){
     const faction=S.countries[code];
     for (const [member,stat] of Object.entries(faction?.memberStats || {})){
-      const row=S.memberRows[member]; if (!row) continue;
-      row.force.textContent=fmt(stat.troops);
-      row.loss.textContent=`LOSS ${fmt(stat.casualties)}`;
+      const row=S.memberRows[member], lossRow=S.lossRows?.[member];
+      if (row) row.force.textContent=fmt(stat.troops);
+      if (lossRow) lossRow.loss.textContent=`LOSS ${fmt(stat.casualties)}`;
     }
   }
 }
@@ -2512,7 +2523,8 @@ function deployCoalitionFormations(side){
   const members=faction.members.filter(code=>(faction.memberStats[code]?.troops||0)>0);
   if(!members.length) return;
   const total=members.reduce((n,code)=>n+faction.memberStats[code].troops,0);
-  for(const cell of frontierCellsOf(side)){
+  const frontCells=frontierCellsOf(side);
+  for(const cell of frontCells){
     // Cell-coordinate hashing keeps formations stable while the front holds;
     // it is deliberately independent of the array order rebuilt by combat.
     const hash=(((cell.ix*73856093) ^ (cell.iy*19349663)) >>> 0) % 100000;
@@ -2522,6 +2534,11 @@ function deployCoalitionFormations(side){
       if(pick<=0){ assigned=code; break; }
     }
     cell.flagCountry=assigned;
+  }
+  // On a broad front, guarantee that every force still has a visible sector.
+  if(frontCells.length>=members.length){
+    const anchors=sampleEvenlyCells(frontCells,members.length);
+    anchors.forEach((cell,index)=>{ cell.flagCountry=members[index]; });
   }
 }
 // Flag/label positions are still recomputed every combat tick from the
@@ -2716,15 +2733,15 @@ function computeFlagTargets(side, country){
   const perFlag = flagsPerFlagDivisor(total);
   const desired = clamp(Math.round(total / perFlag), 1, 120);
 
-  // A national formation belongs to its coalition, not a fenced-off home
-  // country. Every member can therefore redeploy across allied ground to an
-  // exposed sector. National force/loss accounting remains in memberStats;
-  // this only decides where that formation is displayed and engaged.
-  const owned = S.cells.filter(c => c.owner === side);
+  // Formations may cross allied territory, but preserve their national flag:
+  // active cells are assigned by deployCoalitionFormations(), while quiet
+  // territory retains the formation currently stationed there.
+  const coalitionOwned = S.cells.filter(c => c.owner === side);
+  const owned = coalitionOwned.filter(c => c.flagCountry === country);
   if (!owned.length) return [];
 
   const enemySide=side==='player'?'enemy':'player';
-  const fronts = owned.filter(c => c.neighbors.some(nb=>nb.owner===enemySide));
+  const fronts = coalitionOwned.filter(c => c.flagCountry===country && c.neighbors.some(nb=>nb.owner===enemySide));
   const frontSet = new Set(fronts);
   const interiorCells = owned.filter(c => !frontSet.has(c));
 
@@ -2976,8 +2993,10 @@ function frontComponents(side){
   // number when they are material, while tiny one-cell pockets stay quiet.
   // The modest relative threshold still permits four real fronts to display.
   const total=groups.reduce((n,g)=>n+g.length,0);
-  return groups.filter(g=>g.length>=Math.max(3,Math.ceil(total*0.04)))
+  const material=groups.filter(g=>g.length>=Math.max(40,Math.ceil(total*0.08)))
     .sort((a,b)=>b.length-a.length).slice(0,4);
+  material.frontWeight=total;
+  return material;
 }
 function labelAnchor(side, group, cells){
   let lat=0,lng=0;
@@ -3001,14 +3020,15 @@ function drawTroopLabel(side){
   const old=S.labelMarkers[side] || [];
   if (!ctry || !cells.length){ old.forEach(m=>map.hasLayer(m.marker)&&map.removeLayer(m.marker)); delete S.labelMarkers[side]; return; }
   let groups=frontComponents(side);
-  if (!groups.length) groups=[cells];
-  const total=effectiveTroops(side), totalFront=groups.reduce((n,g)=>n+g.length,0);
+  let allFrontWeight=groups.frontWeight || 0;
+  if (!groups.length){ groups=[cells]; allFrontWeight=0; }
+  const total=effectiveTroops(side), totalFront=allFrontWeight || groups.reduce((n,g)=>n+g.length,0);
   const targets=groups.map(group=>{
     const anchor=labelAnchor(side,group,cells);
     // The force has one live coalition pool. Its displayed deployment is
     // apportioned by actual exposed frontage, so separate labels add up to
     // that pool instead of each repeating the coalition total.
-    const share=groups.length===1 ? total : total*(group.length/Math.max(1,totalFront));
+    const share=allFrontWeight ? total*(group.length/Math.max(1,totalFront)) : total;
     const dir=neighborEnemyDirection(anchor,side)||nearestEnemyDirection(anchor.c[0],anchor.c[1],side);
     return { group, cell:anchor, display:share, tilt:dir?facingTilt(bearingOf(dir,anchor.c[0]),24):0 };
   });
