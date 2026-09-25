@@ -72,10 +72,9 @@ body{background:#060606;color:#ddd;font-family:'Courier New',monospace}
   box-shadow:0 0 20px rgba(0,0,0,.55)
 }
 
-/* Coalition detail + casualties — top-left (compact) */
-#forces{top:12px;left:12px;padding:9px 13px;min-width:0;max-width:290px}
+/* Casualties — top-left (compact) */
+#cas{top:12px;left:12px;padding:9px 13px;min-width:0}
 #cas h3{font-size:10px;letter-spacing:.22em;color:#c92020;margin-bottom:8px;font-weight:bold}
-#cas{min-width:0}
 .crow{display:flex;align-items:center;gap:9px;margin-bottom:6px}
 .crow:last-child{margin-bottom:0}
 .cico{width:22px;height:15px;flex-shrink:0;display:block;
@@ -287,20 +286,17 @@ body{background:#060606;color:#ddd;font-family:'Courier New',monospace}
 <div id="game">
   <div id="map"></div>
 
-  <!-- Individual coalition forces and losses — top-left -->
-  <div class="panel" id="forces">
-    <div id="cas">
-      <h3>CASUALTIES</h3>
-      <div class="crow">
-        <img class="cico" id="pico" alt="">
-        <div><div class="cnum" id="pcas">0</div><div class="csub">YOUR LOSSES</div></div>
-      </div>
-      <div class="crow enemy">
-        <img class="cico" id="eico" alt="">
-        <div><div class="cnum" id="ecas">0</div><div class="csub">ENEMY LOSSES</div></div>
-      </div>
+  <!-- Losses only — top-left -->
+  <div class="panel" id="cas">
+    <h3>CASUALTIES</h3>
+    <div class="crow">
+      <img class="cico" id="pico" alt="">
+      <div><div class="cnum" id="pcas">0</div><div class="csub">YOUR LOSSES</div></div>
     </div>
-    <div class="coalitionRoster" id="coalitionRoster"></div>
+    <div class="crow enemy">
+      <img class="cico" id="eico" alt="">
+      <div><div class="cnum" id="ecas">0</div><div class="csub">ENEMY LOSSES</div></div>
+    </div>
   </div>
 
   <!-- Player info — top-right -->
@@ -313,6 +309,7 @@ body{background:#060606;color:#ddd;font-family:'Courier New',monospace}
     <div class="rlbl" id="allylbl">ALLIANCE: —</div>
     <div class="olbl" id="olbl">NO ACTIVE ORDER</div>
     <div class="olbl" id="ealert" style="display:none;color:#ff9d2b">⚠ ENEMY OFFENSIVE — TROOPS DEFENDING</div>
+    <div class="coalitionRoster" id="coalitionRoster"></div>
   </div>
 
   <!-- Date — top-center -->
@@ -2506,6 +2503,27 @@ function regenTick(){
 }
 
 // ── FLAGS + LABELS ────────────────────────────────────────────────
+// Give every active coalition border a stable mix of its members. This is the
+// spatial bridge between the shared combat pool and per-country accounting:
+// an ally can reinforce another member's border and then absorb losses there.
+function deployCoalitionFormations(side){
+  const faction=S.countries[side==='player'?S.pCode:S.eCode];
+  if(!faction?.members?.length) return;
+  const members=faction.members.filter(code=>(faction.memberStats[code]?.troops||0)>0);
+  if(!members.length) return;
+  const total=members.reduce((n,code)=>n+faction.memberStats[code].troops,0);
+  for(const cell of frontierCellsOf(side)){
+    // Cell-coordinate hashing keeps formations stable while the front holds;
+    // it is deliberately independent of the array order rebuilt by combat.
+    const hash=(((cell.ix*73856093) ^ (cell.iy*19349663)) >>> 0) % 100000;
+    let pick=(hash/100000)*total, assigned=members[members.length-1];
+    for(const code of members){
+      pick-=faction.memberStats[code].troops;
+      if(pick<=0){ assigned=code; break; }
+    }
+    cell.flagCountry=assigned;
+  }
+}
 // Flag/label positions are still recomputed every combat tick from the
 // live frontier — that part of the system is unchanged and keeps
 // following combat exactly as before. What's new is that flags persist
@@ -2513,6 +2531,7 @@ function regenTick(){
 // destroyed and recreated, and that density now scales with army size.
 function renderFlagsAndLabels(){
   for (const side of ['player','enemy']){
+    deployCoalitionFormations(side);
     const faction=S.countries[side==='player'?S.pCode:S.eCode];
     for (const country of faction?.members || []) syncFlags(side, country);
   }
@@ -2697,7 +2716,11 @@ function computeFlagTargets(side, country){
   const perFlag = flagsPerFlagDivisor(total);
   const desired = clamp(Math.round(total / perFlag), 1, 120);
 
-  const owned = S.cells.filter(c => c.owner === side && c.flagCountry === country);
+  // A national formation belongs to its coalition, not a fenced-off home
+  // country. Every member can therefore redeploy across allied ground to an
+  // exposed sector. National force/loss accounting remains in memberStats;
+  // this only decides where that formation is displayed and engaged.
+  const owned = S.cells.filter(c => c.owner === side);
   if (!owned.length) return [];
 
   const enemySide=side==='player'?'enemy':'player';
@@ -2949,13 +2972,12 @@ function frontComponents(side){
     }
     groups.push(group);
   }
-  // Only material fronts earn their own number.  This prevents tiny islands
-  // or a one-cell pocket from creating visual noise, while disconnected major
-  // theatres naturally receive separate formations.
-  const largest=Math.max(1,...groups.map(g=>g.length));
-  // A theatre has to be substantial before it earns another number. This
-  // avoids turning one broken-up front into a field of floating arithmetic.
-  return groups.filter(g=>g.length>=Math.max(8,largest*0.28)).sort((a,b)=>b.length-a.length).slice(0,2);
+  // A connected line is one theatre. Disconnected theatres each get their own
+  // number when they are material, while tiny one-cell pockets stay quiet.
+  // The modest relative threshold still permits four real fronts to display.
+  const total=groups.reduce((n,g)=>n+g.length,0);
+  return groups.filter(g=>g.length>=Math.max(3,Math.ceil(total*0.04)))
+    .sort((a,b)=>b.length-a.length).slice(0,4);
 }
 function labelAnchor(side, group, cells){
   let lat=0,lng=0;
@@ -2983,6 +3005,9 @@ function drawTroopLabel(side){
   const total=effectiveTroops(side), totalFront=groups.reduce((n,g)=>n+g.length,0);
   const targets=groups.map(group=>{
     const anchor=labelAnchor(side,group,cells);
+    // The force has one live coalition pool. Its displayed deployment is
+    // apportioned by actual exposed frontage, so separate labels add up to
+    // that pool instead of each repeating the coalition total.
     const share=groups.length===1 ? total : total*(group.length/Math.max(1,totalFront));
     const dir=neighborEnemyDirection(anchor,side)||nearestEnemyDirection(anchor.c[0],anchor.c[1],side);
     return { group, cell:anchor, display:share, tilt:dir?facingTilt(bearingOf(dir,anchor.c[0]),24):0 };
@@ -3082,11 +3107,11 @@ function endGame(won, reason){
      <img src="${ec.flagUrl}" alt=""> Enemy casualties: ${fmt(S.cas.e)}<br>
      <span style="color:#888">${reasonStr} · War lasted ${daysElapsed} days</span>`;
 
-  // Fade HUD out. #forces and #vidwrap are preserved — replay will re-show them.
+  // Fade HUD out. #cas and #vidwrap are preserved — replay will re-show them.
   ['info','datepanel','ctrl'].forEach(id => {
     const el=$(id); if(el){ el.style.transition='opacity .5s'; el.style.opacity='0'; }
   });
-  const casEl=$('forces'), vwEl=$('vidwrap');
+  const casEl=$('cas'), vwEl=$('vidwrap');
   if(casEl){ casEl.style.transition='opacity .5s'; casEl.style.opacity='0'; }
   if(vwEl) { vwEl.style.transition='opacity .5s';  vwEl.style.opacity='0'; }
 
@@ -3184,8 +3209,8 @@ function showReplay(){
   $('end').style.display='none';
   $('replayOverlay').style.display='block';
 
-  // Re-show coalition detail and video overlay
-  const casEl=$('forces'), vwEl=$('vidwrap');
+  // Re-show casualties panel and video overlay
+  const casEl=$('cas'), vwEl=$('vidwrap');
   if(casEl){ casEl.style.display=''; casEl.style.opacity='1'; }
   if(vwEl) { vwEl.style.display='';  vwEl.style.opacity='1'; }
 
@@ -3230,8 +3255,8 @@ function closeReplay(){
   if(vidEl){ vidEl.pause(); vidEl.loop=false; }
   if(vwEl)  vwEl.style.display='none';
 
-  // Hide coalition detail
-  const casEl=$('forces');
+  // Hide casualties panel
+  const casEl=$('cas');
   if(casEl) casEl.style.display='none';
 
   $('replayOverlay').style.display='none';
