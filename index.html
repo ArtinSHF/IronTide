@@ -541,6 +541,14 @@ const C = {
   AI_ATTACK_MIN_TROOPS_FRAC: 0.05,  // AI won't attack below 5% of its max strength
   AI_ATTACK_GRACE_MS:        12000, // no AI attacks for the first few seconds
 
+  // ─ AFK MODE: player-side AI is deliberately more decisive/continuous
+  // than the single enemy AI — it's meant to actually run the whole war,
+  // not just occasionally poke at it.
+  PLAYER_AI_CHECK_MS:        700,   // re-evaluates far more often than the enemy's 2000ms
+  PLAYER_AI_MIN_COMMIT_PCT:  0.16,
+  PLAYER_AI_MAX_COMMIT_PCT:  0.55,
+  PLAYER_AI_MIN_TROOPS_FRAC: 0.04,
+
   // ─ long-range invasions ─
   // Movement uses simulation time so the speed controls apply naturally.
   INVASION_MIN_TRAVEL_MS:     4500,
@@ -635,6 +643,30 @@ const EMPIRES = {
   EMP_ABB: { name:'Abbasid Caliphate', iso2:'iq', members:['IRQ','SYR','SAU','JOR','LBN','ISR','PSE','IRN','EGY','LBY','TUN','DZA','MAR','TKM','UZB','TJK','AFG','PAK','YEM','OMN','ARE','QAT','BHR','KWT'] },
   EMP_MNG: { name:'Mongol Empire', iso2:'mn', members:['MNG','CHN','KAZ','RUS','IRN','IRQ','TUR','AFG','PAK','KGZ','UZB','TKM','TJK','AZE','ARM','GEO'] },
 };
+
+// An empire is ONE country — register it as a real, permanent, selectable
+// entity in S.countries (its own name, its own flag, its own merged
+// territory) as soon as real country data is loaded, so it behaves exactly
+// like any other nation everywhere: the primary-selection dropdown, the
+// ally/enemy diplomacy lists, and every flag/force/loss display. Real
+// member states are still used underneath for grid geometry and borders —
+// this just gives the empire itself a first-class identity to point at.
+function registerEmpireEntities(){
+  for (const [code, e] of Object.entries(EMPIRES)){
+    const empMembers = e.members.filter(c => S.countries[c]);
+    if (!empMembers.length) continue;
+    const originals = empMembers.map(c => S.countries[c]);
+    const pop = originals.reduce((n,c) => n + c.pop, 0);
+    const ctr = originals.reduce((a,c) => [a[0] + c.ctr[0]*c.pop/Math.max(1,pop), a[1] + c.ctr[1]*c.pop/Math.max(1,pop)], [0,0]);
+    const feat = mergeFeatures(empMembers);
+    prepareGridGeometry(feat);
+    S.countries[code] = {
+      name: e.name, iso2: e.iso2, flagUrl: FLAG_URL(e.iso2),
+      pop, max: 0, troops: 0, ctrl: 'neutral',
+      borders: [], ctr, feat, isEmpireEntity: true,
+    };
+  }
+}
 
 // ── STATE ─────────────────────────────────────────────────────────
 const S = {
@@ -857,6 +889,8 @@ async function boot() {
       prepareGridGeometry(feat);
     }
 
+    registerEmpireEntities();
+
     bar.style.width = '100%';
     setTimeout(() => {
       $('lmsg').style.display   = 'none';
@@ -874,6 +908,7 @@ async function boot() {
 // ── MENU ──────────────────────────────────────────────────────────
 function fillMenu() {
   const opts = Object.entries(S.countries)
+    .filter(([k, v]) => !v.isEmpireEntity)
     .map(([k, v]) => ({ k, name: v.name }))
     .sort((a, b) => a.name.localeCompare(b.name));
   const ps = $('psel');
@@ -910,9 +945,10 @@ function rebuildEnemy() {
   board.style.display = S.pCode ? 'block' : 'none';
   if (!S.pCode) return;
   if (!S.diplomacy) S.diplomacy = { allies:new Set(), enemies:new Set() };
-  const own = new Set(selectionMembers(S.pCode));
+  // Every real country AND every historical empire is a selectable option —
+  // an empire is exactly as pickable as any normal nation here.
   const options = Object.entries(S.countries)
-    .filter(([k,c]) => !k.startsWith('__') && !own.has(k) && c.feat)
+    .filter(([k,c]) => !k.startsWith('__') && k !== S.pCode && c.feat)
     .map(([k,c]) => ({ k, name:c.name }))
     .sort((a,b) => a.name.localeCompare(b.name));
   S.diplomacy.options = options;
@@ -930,12 +966,24 @@ function toggleDiplomacy(code, side){
 }
 function renderDiplomacy(){
   const d = S.diplomacy, filter = $('dipsearch').value.trim().toLowerCase();
+  // An empire is one country — its real member states are off the table the
+  // moment the empire itself (or another empire sharing that territory) is
+  // picked on either side, and vice versa. This is what actually keeps
+  // "Roman Empire" from also letting someone pick "Italy" separately.
+  const usedFootprint = new Set(selectionMembers(S.pCode));
+  for (const k of d.allies)   for (const m of selectionMembers(k)) usedFootprint.add(m);
+  for (const k of d.enemies)  for (const m of selectionMembers(k)) usedFootprint.add(m);
+
   const options = (d.options || []).filter(o => o.name.toLowerCase().includes(filter));
   const list = (side, id) => {
     const chosen = side === 'ally' ? d.allies : d.enemies;
     const other = side === 'ally' ? d.enemies : d.allies;
     const host = $(id); host.innerHTML = '';
-    const visible = options.filter(o => !other.has(o.k));
+    const visible = options.filter(o => {
+      if (other.has(o.k)) return false;
+      if (chosen.has(o.k)) return true;
+      return !selectionMembers(o.k).some(m => usedFootprint.has(m));
+    });
     if (!visible.length){ host.innerHTML = '<div class="diploEmpty">NO COUNTRIES FOUND</div>'; return; }
     for (const o of visible){
       const c = S.countries[o.k], active = chosen.has(o.k);
@@ -2158,25 +2206,30 @@ function maybeStartAIAttack(){
 }
 
 // ── AFK MODE: PLAYER-SIDE AI ATTACK ─────────────────────────────
-// Exact mirror of maybeStartAIAttack() above, with sides swapped, so
-// AFK mode plays exactly as aggressively/cautiously as the enemy AI
-// does. Only runs while S.autoMode is on, and issues its orders through
-// the normal S.attackOrder channel — the same one a human player uses —
-// so combat resolution, defense and everything downstream is unchanged.
+// This is the "Claude, you drive" version — deliberately more decisive
+// and continuous than the single enemy AI, since AFK mode is meant to
+// actually run the whole war rather than occasionally spectate it. It
+// re-evaluates on a fast cadence, keeps a push topped up and redirected
+// toward the sharpest sector instead of firing once and going quiet, and
+// only holds back troops (rather than refusing to act at all) when the
+// situation is bad — that's what maybeStartPlayerRetreat() is for.
 function maybeStartPlayerAI(){
-  if (!S.autoMode || S.over || S.attackOrder) return;
+  if (!S.autoMode || S.over) return;
   const now = S.simMs;
   if (now < (S.playerAiNextRollAt || 0)) return;
-  S.playerAiNextRollAt = now + C.AI_ATTACK_CHECK_MS;
+  S.playerAiNextRollAt = now + C.PLAYER_AI_CHECK_MS;
+  if (S.retreatOrder) return; // let an active withdrawal finish before attacking again
 
   const pc = S.countries[S.pCode], ec = S.countries[S.eCode];
-  if (!pc || !ec || pc.troops < pc.max * C.AI_ATTACK_MIN_TROOPS_FRAC) return;
+  if (!pc || !ec) return;
 
   const fronts = frontierCellsOf('player');
   if (!fronts.length){
+    if (S.attackOrder) return; // already en route overseas
+    if (pc.troops < pc.max * C.PLAYER_AI_MIN_TROOPS_FRAC) return;
     const route = closestLandingTarget('player','enemy');
     if (!route) return;
-    const commit = Math.max(500, Math.floor(pc.troops * 0.18));
+    const commit = Math.max(500, Math.floor(pc.troops * 0.24));
     pc.troops -= commit;
     const icon = L.divIcon({ className:'', iconAnchor:[0,0], html:'<div class="focusring"></div>' });
     const marker = L.marker([route.target.c[0], mapLng(route.target.c[1])],
@@ -2190,23 +2243,38 @@ function maybeStartPlayerAI(){
   const eHeld = ec.cellsOrigTotal ? ec.cellsHeld / ec.cellsOrigTotal : 1;
   const pReadiness = pc.troops / Math.max(1, pc.max);
   const eReadiness = ec.troops / Math.max(1, ec.max);
-  const frontRatio = (battleStrength(pc) / Math.max(1, fronts.length)) /
+  const frontRatio = (battleStrength(pc, S.attackOrder?.commit||0) / Math.max(1, fronts.length)) /
     (battleStrength(ec, S.enemyAttackOrder?.commit || 0) / Math.max(1, frontierCellsOf('enemy').length) + 1);
-  const attackingIntoOrder = !!S.enemyAttackOrder;
-  if (pReadiness < 0.12 || pHeld < 0.28 || (frontRatio < 0.48 && !attackingIntoOrder)) return;
-  const initiative = clamp((frontRatio - 0.55) * 0.34 + (pReadiness - eReadiness) * 0.22 + (eHeld - pHeld) * 0.12, 0, 0.42);
-  const chance = clamp(0.025 + initiative + (attackingIntoOrder ? 0.08 : 0), 0, 0.60);
-  if (Math.random() > chance) return;
+  // -0.2..0.5 — how favorable the moment is. Unlike the enemy AI, a poor
+  // reading doesn't make this function do nothing; it just shrinks the
+  // commit and lets maybeStartPlayerRetreat() decide whether to pull back.
+  const initiative = clamp((frontRatio - 0.5) * 0.4 + (pReadiness - eReadiness) * 0.25 + (eHeld - pHeld) * 0.15, -0.2, 0.5);
 
+  // Find the sharpest sector to press right now.
   const scored = fronts.map(cell => {
     const targets = cell.neighbors.filter(n => n.owner === 'enemy');
     const pressure = targets.reduce((n,t) => n + t.neighbors.filter(x => x.owner === 'enemy').length, 0);
-    const distancePenalty = S.enemyAttackOrder ? Math.hypot(cell.c[0]-S.enemyAttackOrder.lat, cell.c[1]-S.enemyAttackOrder.lng) * 0.22 : 0;
+    const distancePenalty = S.attackOrder ? Math.hypot(cell.c[0]-S.attackOrder.lat, cell.c[1]-S.attackOrder.lng) * 0.22 : 0;
     return { cell, score: pressure - distancePenalty + Math.random()*0.35 };
   }).sort((a,b) => b.score - a.score);
   const focusCell = scored[0].cell;
-  const pct = clamp(0.12 + initiative * 0.65 + (attackingIntoOrder ? 0.08 : 0),
-                    C.AI_ATTACK_MIN_COMMIT_PCT, C.AI_ATTACK_MAX_COMMIT_PCT + 0.18);
+
+  if (S.attackOrder){
+    // Keep a single sustained offensive alive — top it up and, if the
+    // sharpest sector has shifted, redirect toward it — rather than
+    // abandoning it to start a fresh one every roll.
+    if (pc.troops < pc.max * C.PLAYER_AI_MIN_TROOPS_FRAC) return;
+    const topUp = Math.max(500, Math.floor(pc.troops * clamp(0.08 + Math.max(0,initiative)*0.3, 0.05, 0.3)));
+    pc.troops -= topUp;
+    S.attackOrder.commit += topUp;
+    S.attackOrder.lat = focusCell.c[0]; S.attackOrder.lng = focusCell.c[1];
+    if (S.attackOrder.marker) S.attackOrder.marker.setLatLng([focusCell.c[0], mapLng(focusCell.c[1])]);
+    return;
+  }
+
+  if (pc.troops < pc.max * C.PLAYER_AI_MIN_TROOPS_FRAC) return;
+  const pct = clamp(C.PLAYER_AI_MIN_COMMIT_PCT + Math.max(0, initiative) * 0.7,
+                    C.PLAYER_AI_MIN_COMMIT_PCT, C.PLAYER_AI_MAX_COMMIT_PCT);
   const commit = Math.max(500, Math.floor(pc.troops * pct));
   pc.troops -= commit;
 
@@ -2217,17 +2285,18 @@ function maybeStartPlayerAI(){
 }
 
 // ── AFK MODE: PLAYER-SIDE AI RETREAT ────────────────────────────
-// Mirror of maybeStartAIRetreat() above. Reuses the player's own
+// Mirror of maybeStartAIRetreat() above. Cancels (and refunds) any
+// ongoing AFK offensive first, then reuses the player's own
 // startRetreat() — the exact function a human triggers by clicking
 // their own territory — so the withdrawal plays out identically.
 function maybeStartPlayerRetreat(){
-  if (!S.autoMode || S.over || S.retreatOrder || S.attackOrder) return;
+  if (!S.autoMode || S.over || S.retreatOrder) return;
   const pc = S.countries[S.pCode];
   const ec = S.countries[S.eCode];
   if (!pc || !ec) return;
   const ratio = pc.troops / (pc.troops + ec.troops + 1);
   if (ratio > 0.28) return;
-  if (Math.random() > 0.0015) return;
+  if (Math.random() > 0.004) return;
 
   const pFronts = frontierCellsOf('player');
   if (!pFronts.length) return;
@@ -2247,6 +2316,7 @@ function maybeStartPlayerRetreat(){
   const nearest = nearestAnyCell([retLat, retLng]);
   if (!nearest || nearest.owner !== 'player') return;
 
+  if (S.attackOrder) clearAttackOrder(true);
   startRetreat(retLat, retLng);
 }
 
@@ -3230,13 +3300,20 @@ function groupEnemyDirection(group, side){
 }
 function frontComponents(side){
   const fronts=frontierCellsOf(side), set=new Set(fronts), seen=new Set(), groups=[];
+  // Group with 8-directional adjacency, not just the 4-directional combat
+  // neighbor list — a zigzagging border's frontier cells often only touch
+  // each other diagonally, and treating that as "several fronts" was the
+  // bug. Anything physically touching (edge OR corner) is one front.
+  const DIAG=[[-1,-1],[-1,0],[-1,1],[0,-1],[0,1],[1,-1],[1,0],[1,1]];
   for (const start of fronts){
     if (seen.has(start)) continue;
     const group=[], queue=[start]; seen.add(start);
     for (let i=0;i<queue.length;i++){
       const cur=queue[i]; group.push(cur);
-      for (const nb of cur.neighbors)
-        if (set.has(nb) && !seen.has(nb)){ seen.add(nb); queue.push(nb); }
+      for (const [dx,dy] of DIAG){
+        const nb=S.cellByXY.get((cur.ix+dx) + ',' + (cur.iy+dy));
+        if (nb && set.has(nb) && !seen.has(nb)){ seen.add(nb); queue.push(nb); }
+      }
     }
     groups.push(group);
   }
