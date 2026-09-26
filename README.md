@@ -33,7 +33,8 @@ Troop sizes are seeded from real-world population figures, so picking a superpow
 * **Full World Atlas:** Every country in the world is selectable, loaded from live TopoJSON + world-countries data.
 * **Player-Controlled Diplomacy:** Pick zero, one, or several allies — then choose one or more enemy countries. Alliances do not need to make geopolitical sense. That's between you and history. 😂
 * **Coalition Territory:** Allied and enemy countries merge their territory, manpower and fronts into real fighting coalitions instead of acting as a cosmetic troop bonus.
-* **Historical Empire Starts:** Play as the Roman, Ottoman, British, Soviet or Mongol Empire. Their modern member territories become one playable entity on the map.
+* **18 Historical Empire Starts:** Play as the Roman, Byzantine, Ottoman, British, Spanish, Portuguese, Persian, Russian, Soviet, Austro-Hungarian, French Colonial, German, Qing, Mughal, Japanese, Macedonian, Umayyad, or Abbasid Empire.
+* **Empires Are One Country:** No exceptions. However many modern nations sit inside its historical borders, an empire fields one flag, one force total, one loss total, and one seat at the diplomacy table — never a pile of separate modern countries wearing an empire's name. Add a real ally on top (say, Roman Empire + Germany) and *that* still shows up as its own country, exactly like it should.
 * **High-Detail Cell Grid Engine:** Every selected coalition territory is carved into invisible square cells. Each cell tracks its owner, home nation, current formation, neighbours, and whether it sits on an active front line.
 * **Anti-Meridian-Safe Geography:** Date-line-spanning geometry is converted into continuous simulation rings and split safely for rendering. Russia and other seam-crossing countries do not create phantom territory, fronts, or world-spanning lines.
 * **Live Front Line Rendering:** Border cells are outlined in a warm yellow highlight — interior territory has no borders, so the coloured mass looks smooth and organic.
@@ -53,6 +54,11 @@ Troop sizes are seeded from real-world population figures, so picking a superpow
 * **Auto-Defend on AI Attack:** While the enemy is pressing, your troops near the front automatically defend and reclaim lost ground — but will never automatically invade. Only your orders can push into enemy territory.
 * **AI Grace Period:** A brief grace period at game start before the AI is allowed to roll for its first attack, giving you time to orient.
 * **Retreat System:** Both the player and the AI can fall back to consolidate their front line.
+
+### 🤖 AFK Mode
+
+* **Automode:** Press AFK Mode and a second AI — running the exact same strategic playbook as the enemy — takes over your side. It reads readiness, territory held, and front pressure just like the enemy AI does, then attacks, defends, and retreats through the same order system a human player uses. Press it, sit back, and watch two AIs fight the whole war like one of those country-vs-country simulation videos. 🍿
+* **Non-Destructive:** AFK Mode plugs into the normal attack/retreat orders instead of a separate combat path, so nothing about how battles resolve changes — it just decides *when* and *where* to click for you.
 
 ### Troop & Simulation System
 
@@ -145,6 +151,7 @@ irontide/
 6. **Click your own territory** to muster and reposition your forces.
 7. **Watch the front line.** The yellow border shows where fighting is happening.
 8. **Overrun the enemy coalition** before it overruns yours. First side to lose all cells loses the war.
+9. **Or just hit AFK Mode** and let the AI run your side while you watch the whole thing play out. 🍿
 
 ---
 
@@ -152,7 +159,7 @@ irontide/
 
 This is an actively maintained experimental project.
 
-Updates are focused on expanding the AI behaviour, refining multi-front coalition conflict, improving troop mechanics, and polishing large-scale territorial rendering.
+Updates are focused on expanding the AI behaviour, refining multi-front coalition conflict, improving troop mechanics, and polishing large-scale territorial rendering. Latest pass: a much larger empire roster, a proper empire-as-one-country fix across flags/forces/losses/diplomacy, and AFK Mode.
 
 ---
 

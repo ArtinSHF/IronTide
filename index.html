@@ -325,6 +325,8 @@ body{background:#060606;color:#ddd;font-family:'Courier New',monospace}
   <div class="panel" id="ctrl">
     <button class="cbtn" id="mbtn" onclick="toggleMute()">🔊 MUTE</button>
     <div class="csep"></div>
+    <button class="cbtn" id="afkbtn" onclick="toggleAutoMode()" title="Let the AI command your side — sit back and watch">🤖 AFK MODE</button>
+    <div class="csep"></div>
     <span class="spdlbl">SPEED</span>
     <button class="cbtn on" id="s1" onclick="setSpeed(1)">1×</button>
     <button class="cbtn"    id="s2" onclick="setSpeed(2)">2×</button>
@@ -614,9 +616,23 @@ const POP_FALLBACK = {
 // before the grid is built.
 const EMPIRES = {
   EMP_ROM: { name:'Roman Empire', iso2:'it', members:['ITA','FRA','ESP','PRT','GRC','TUR','EGY','TUN','DZA','MAR','LBY','HRV','SVN','ALB','MKD','SRB','BGR','ROU','HUN','AUT','CHE','BEL','NLD','SYR','LBN','ISR','JOR'] },
+  EMP_BYZ: { name:'Byzantine Empire', iso2:'gr', members:['GRC','TUR','BGR','SRB','MKD','ALB','ITA','EGY','LBY','TUN','DZA','SYR','LBN','ISR','JOR'] },
   EMP_OTT: { name:'Ottoman Empire', iso2:'tr', members:['TUR','GRC','BGR','SRB','BIH','ALB','MKD','ROU','HUN','SYR','LBN','ISR','JOR','IRQ','SAU','EGY','LBY','TUN','DZA'] },
   EMP_BRI: { name:'British Empire', iso2:'gb', members:['GBR','IRL','CAN','AUS','NZL','IND','PAK','BGD','ZAF','EGY','KEN','NGA','GHA','MYS'] },
+  EMP_SPA: { name:'Spanish Empire', iso2:'es', members:['ESP','MEX','ARG','COL','PER','VEN','CHL','ECU','BOL','PRY','URY','CUB','DOM','PHL','GTM','HND','NIC','CRI','PAN','SLV'] },
+  EMP_POR: { name:'Portuguese Empire', iso2:'pt', members:['PRT','BRA','AGO','MOZ','GNB','CPV','STP','TLS','MAC'] },
+  EMP_PER: { name:'Persian Empire', iso2:'ir', members:['IRN','IRQ','AFG','ARM','AZE','GEO','TUR','SYR','LBN','ISR','JOR','EGY','PAK','TJK','TKM','UZB','KWT','BHR','QAT','ARE','OMN','SAU'] },
+  EMP_RUS: { name:'Russian Empire', iso2:'ru', members:['RUS','UKR','BLR','POL','FIN','EST','LVA','LTU','GEO','ARM','AZE','KAZ','UZB','TKM','KGZ','TJK','MDA'] },
   EMP_SOV: { name:'Soviet Union', iso2:'ru', members:['RUS','UKR','BLR','MDA','EST','LVA','LTU','GEO','ARM','AZE','KAZ','UZB','TKM','KGZ','TJK'] },
+  EMP_AUH: { name:'Austro-Hungarian Empire', iso2:'at', members:['AUT','HUN','CZE','SVK','SVN','HRV','BIH','SRB','ROU','POL','UKR'] },
+  EMP_FRC: { name:'French Colonial Empire', iso2:'fr', members:['FRA','DZA','MAR','TUN','SEN','MLI','NER','TCD','CIV','BFA','BEN','TGO','GIN','MRT','CMR','GAB','COG','CAF','MDG','VNM','LAO','KHM','HTI','LBN','SYR'] },
+  EMP_GER: { name:'German Empire', iso2:'de', members:['DEU','POL','NAM','TZA','CMR','TGO'] },
+  EMP_QIN: { name:'Qing Empire', iso2:'cn', members:['CHN','MNG','TWN'] },
+  EMP_MUG: { name:'Mughal Empire', iso2:'in', members:['IND','PAK','BGD'] },
+  EMP_JPN: { name:'Japanese Empire', iso2:'jp', members:['JPN','KOR','PRK','TWN'] },
+  EMP_MAC: { name:'Macedonian Empire', iso2:'gr', members:['GRC','TUR','EGY','SYR','LBN','ISR','JOR','IRQ','IRN','AFG','PAK','TKM','UZB','TJK','KGZ','ARM','AZE','GEO'] },
+  EMP_UMY: { name:'Umayyad Caliphate', iso2:'sy', members:['SYR','IRQ','SAU','JOR','LBN','ISR','PSE','EGY','LBY','TUN','DZA','MAR','ESP','PRT','IRN','TUR','ARM','AZE','TKM','UZB','PAK'] },
+  EMP_ABB: { name:'Abbasid Caliphate', iso2:'iq', members:['IRQ','SYR','SAU','JOR','LBN','ISR','PSE','IRN','EGY','LBY','TUN','DZA','MAR','TKM','UZB','TJK','AFG','PAK','YEM','OMN','ARE','QAT','BHR','KWT'] },
   EMP_MNG: { name:'Mongol Empire', iso2:'mn', members:['MNG','CHN','KAZ','RUS','IRN','IRQ','TUR','AFG','PAK','KGZ','UZB','TKM','TJK','AZE','ARM','GEO'] },
 };
 
@@ -638,6 +654,8 @@ const S = {
   enemyAttackOrder: null, // { lat, lng, commit, marker, until } — AI-issued
   enemyRetreatOrder: null,// { retreatCells, lineLayer, enemyDirLat, enemyDirLng } — AI retreat
   aiNextRollAt: 0,        // next time the enemy AI is allowed to roll for an attack
+  autoMode: false,        // AFK / Automode — AI plays the player's side too
+  playerAiNextRollAt: 0,  // next time the player-side AFK AI is allowed to roll for an attack
 
   // ─ display ─
   flagPools: { player: {}, enemy: {} }, // persistent flag markers, keyed by nation
@@ -951,6 +969,13 @@ function renderDiplomacy(){
 function membersForFaction(faction){
   return faction?.members || [];
 }
+// The real underlying nation (never an empire code) to fall back on when
+// gap-filling territory — origCountry stats always stay keyed by real ISO3
+// codes even though the displayed flag/formation may collapse to an empire.
+function defaultRealCountry(side){
+  const faction=S.countries[side==='player'?S.pCode:S.eCode];
+  return faction?.primaryMembers?.[0] || faction?.members?.[0] || null;
+}
 function countryAtPoint(lng, lat, members){
   for (const code of members){
     const c = S.countries[code];
@@ -960,13 +985,28 @@ function countryAtPoint(lng, lat, members){
 }
 function homeSideForCountry(code){
   const pc=S.countries[S.pCode], ec=S.countries[S.eCode];
+  if (code && pc?.primary===code && EMPIRES[code]) return 'player';
+  if (code && ec?.primary===code && EMPIRES[code]) return 'enemy';
   if (membersForFaction(pc).includes(code)) return 'player';
   if (membersForFaction(ec).includes(code)) return 'enemy';
   return null;
 }
 function defaultFormation(side){
   const faction=S.countries[side==='player'?S.pCode:S.eCode];
-  return faction?.primaryMembers?.[0] || faction?.members?.[0] || null;
+  if (!faction) return null;
+  if (EMPIRES[faction.primary]) return faction.primary;
+  return faction.primaryMembers?.[0] || faction.members?.[0] || null;
+}
+// An empire is ONE country: any cell whose real underlying nation is one of
+// the empire's historical member states is displayed/tracked under the
+// empire's own code, never under that member's own code. Genuine allies
+// (added via diplomacy, not part of the empire itself) keep their own code.
+function formationCodeFor(side, countryCode){
+  const faction=S.countries[side==='player'?S.pCode:S.eCode];
+  if (faction && EMPIRES[faction.primary] && EMPIRES[faction.primary].members.includes(countryCode)){
+    return faction.primary;
+  }
+  return countryCode;
 }
 function formationForCapture(cell, side, source){
   if (source?.flagCountry && homeSideForCountry(source.flagCountry) === side) return source.flagCountry;
@@ -1045,7 +1085,7 @@ function buildGridPass(minX, minY, w, h, side, pMembers, eMembers){
         if (around.every(o => o === around[0])){
           const nearby = [[ix-1,iy],[ix+1,iy],[ix,iy-1],[ix,iy+1]]
             .map(([nx,ny]) => ownerGrid.get(nx+','+ny)).find(v=>v?.side===around[0]);
-          ownerGrid.set(key, { side:around[0], country:nearby?.country || defaultFormation(around[0]) });
+          ownerGrid.set(key, { side:around[0], country:nearby?.country || defaultRealCountry(around[0]) });
           filledAny = true;
         }
       }
@@ -1073,7 +1113,7 @@ function buildGridPass(minX, minY, w, h, side, pMembers, eMembers){
       owner:initial.side,
       origCountry,
       homeSide:initial.side,
-      flagCountry:initial.country,
+      flagCountry:formationCodeFor(initial.side, initial.country),
       neighbors: [],
     };
     S.cells.push(cell);
@@ -1109,6 +1149,18 @@ function recountCells(){
     }
     if (cell.owner === 'player') pOwned++;
     if (cell.owner === 'enemy' ) eOwned++;
+  }
+  // An empire's synthetic entity has no cells of its own in the loop above
+  // (those land under its real member countries) — roll those member totals
+  // up onto the empire entity so its single roster row can weight replacements.
+  for (const faction of [pc, ec]){
+    if (faction && EMPIRES[faction.primary]){
+      const emp = S.countries[faction.primary];
+      if (emp){
+        emp.cellsHeld = faction.primaryMembers.reduce((n,m)=>n+(S.countries[m]?.cellsHeld||0),0);
+        emp.cellsOrigTotal = faction.primaryMembers.reduce((n,m)=>n+(S.countries[m]?.cellsOrigTotal||0),0);
+      }
+    }
   }
   S.cellsP = pOwned; S.cellsE = eOwned;
   updatePeaceButtons();
@@ -1241,7 +1293,10 @@ function mergeFeatures(members){
 
 function createFaction(selection, side, allies){
   const primaryMembers = selectionMembers(selection).filter(c => S.countries[c]);
-  const members = [...new Set(primaryMembers.concat(allies || []))];
+  const trueAllies = [...new Set(allies || [])].filter(c => S.countries[c] && !primaryMembers.includes(c));
+  // `members` stays the full real-ISO3 territorial roster — grid geometry,
+  // borders and per-nation land stats all still need the actual countries.
+  const members = [...new Set(primaryMembers.concat(trueAllies))];
   const originals = members.map(c => S.countries[c]).filter(Boolean);
   const pop = originals.reduce((n,c) => n + c.pop, 0);
   const max = Math.min(Math.floor(pop * C.TROOP_PCT), C.TROOP_CAP);
@@ -1249,25 +1304,52 @@ function createFaction(selection, side, allies){
   const base = EMPIRES[selection];
   const primary = base || S.countries[selection];
   const code = side === 'player' ? '__PLAYER_COALITION__' : '__ENEMY_COALITION__';
+
+  // An empire is ONE country. Fuse its historical member states into a
+  // single synthetic entity — one flag, one force total, one loss total,
+  // one identity for allies/enemies/coalitions — instead of letting the
+  // modern countries inside it show up as separate nations. A genuine ally
+  // added on top (e.g. "Roman Empire + Germany") stays its own country.
+  let empirePop = 0;
+  if (base){
+    const empOriginals = primaryMembers.map(c => S.countries[c]).filter(Boolean);
+    empirePop = empOriginals.reduce((n,c) => n + c.pop, 0);
+    const empireCtr = empOriginals.reduce((a,c) => [a[0] + c.ctr[0] * c.pop / Math.max(1,empirePop), a[1] + c.ctr[1] * c.pop / Math.max(1,empirePop)], [0,0]);
+    if (!S.countries[selection]){
+      S.countries[selection] = {
+        name: base.name, iso2: base.iso2, flagUrl: FLAG_URL(base.iso2),
+        pop: empirePop, max: 0, troops: 0, ctrl: 'neutral',
+        borders: [], ctr: empireCtr, feat: mergeFeatures(primaryMembers),
+        isEmpireEntity: true,
+      };
+    } else {
+      S.countries[selection].pop = empirePop;
+    }
+  }
+  // The display/roster identity: the whole empire collapses to one key;
+  // real allies keep their own. Non-empire selections are unaffected —
+  // each member (the country itself, plus any allies) still shows separately.
+  const rosterKeys = base ? [selection, ...trueAllies] : members;
+
   const faction = S.countries[code] = {
     name: base ? base.name : primary.name,
     iso2: base ? base.iso2 : primary.iso2,
     flagUrl: FLAG_URL(base ? base.iso2 : primary.iso2), pop, max, troops:0,
     ctrl:side, borders:[], ctr, feat:mergeFeatures(members), members,
-    primaryMembers, allies: (allies || []).filter(c => members.includes(c)), primary:selection, regenMult:1,
-    memberStats:{},
+    primaryMembers, allies: trueAllies, primary:selection, regenMult:1,
+    rosterKeys, memberStats:{},
   };
   // The simulation keeps one aggregate fighting pool, while this roster keeps
-  // the real national composition visible.  Scale members to the coalition
-  // cap so the displayed totals always add up to the force actually fielded.
+  // the displayed national composition visible.  Scale roster entries to the
+  // coalition cap so the displayed totals always add up to the force fielded.
   let assignedMax=0, assignedTroops=0;
-  members.forEach((member, index) => {
-    const country=S.countries[member];
-    const isLast=index===members.length-1;
-    const memberMax=isLast ? Math.max(0, max-assignedMax) : Math.floor(max*country.pop/Math.max(1,pop));
-    const troops=isLast ? Math.max(0, Math.floor(max*C.START_PCT)-assignedTroops) : Math.floor(memberMax*C.START_PCT);
-    faction.memberStats[member]={ max:memberMax, troops, casualties:0 };
-    assignedMax+=memberMax; assignedTroops+=troops;
+  rosterKeys.forEach((key, index) => {
+    const weightPop = (base && key===selection) ? empirePop : (S.countries[key]?.pop || 0);
+    const isLast=index===rosterKeys.length-1;
+    const keyMax=isLast ? Math.max(0, max-assignedMax) : Math.floor(max*weightPop/Math.max(1,pop));
+    const troops=isLast ? Math.max(0, Math.floor(max*C.START_PCT)-assignedTroops) : Math.floor(keyMax*C.START_PCT);
+    faction.memberStats[key]={ max:keyMax, troops, casualties:0 };
+    assignedMax+=keyMax; assignedTroops+=troops;
   });
   return code;
 }
@@ -1335,11 +1417,11 @@ function buildCoalitionHUD(){
     lossHead.className=`coalitionHead ${side}`;
     lossHead.textContent=`${faction.name.toUpperCase()} LOSSES`;
     lossHost.appendChild(lossHead);
-    for (const member of faction.members){
+    for (const member of faction.rosterKeys){
       const country=S.countries[member], stat=faction.memberStats[member];
       if (!country || !stat) continue;
       const row=document.createElement('div');
-      const isMain=faction.primaryMembers.includes(member);
+      const isMain=member===faction.primary || faction.primaryMembers.includes(member);
       row.className=`coalitionRow ${side} ${isMain?'main':''}`;
       row.innerHTML=`<img src="${country.flagUrl}" alt=""><span class="nation">${isMain?'MAIN · ':''}${country.name}</span><span class="numbers"><b>—</b></span>`;
       host.appendChild(row);
@@ -2075,6 +2157,99 @@ function maybeStartAIAttack(){
   };
 }
 
+// ── AFK MODE: PLAYER-SIDE AI ATTACK ─────────────────────────────
+// Exact mirror of maybeStartAIAttack() above, with sides swapped, so
+// AFK mode plays exactly as aggressively/cautiously as the enemy AI
+// does. Only runs while S.autoMode is on, and issues its orders through
+// the normal S.attackOrder channel — the same one a human player uses —
+// so combat resolution, defense and everything downstream is unchanged.
+function maybeStartPlayerAI(){
+  if (!S.autoMode || S.over || S.attackOrder) return;
+  const now = S.simMs;
+  if (now < (S.playerAiNextRollAt || 0)) return;
+  S.playerAiNextRollAt = now + C.AI_ATTACK_CHECK_MS;
+
+  const pc = S.countries[S.pCode], ec = S.countries[S.eCode];
+  if (!pc || !ec || pc.troops < pc.max * C.AI_ATTACK_MIN_TROOPS_FRAC) return;
+
+  const fronts = frontierCellsOf('player');
+  if (!fronts.length){
+    const route = closestLandingTarget('player','enemy');
+    if (!route) return;
+    const commit = Math.max(500, Math.floor(pc.troops * 0.18));
+    pc.troops -= commit;
+    const icon = L.divIcon({ className:'', iconAnchor:[0,0], html:'<div class="focusring"></div>' });
+    const marker = L.marker([route.target.c[0], mapLng(route.target.c[1])],
+                            { icon, zIndexOffset: 950, interactive:false }).addTo(map);
+    S.attackOrder = { lat: route.target.c[0], lng: route.target.c[1], commit, marker, intensityFrac: 0.5 };
+    beginLongRangeInvasion(S.attackOrder, route.target);
+    return;
+  }
+
+  const pHeld = pc.cellsOrigTotal ? pc.cellsHeld / pc.cellsOrigTotal : 1;
+  const eHeld = ec.cellsOrigTotal ? ec.cellsHeld / ec.cellsOrigTotal : 1;
+  const pReadiness = pc.troops / Math.max(1, pc.max);
+  const eReadiness = ec.troops / Math.max(1, ec.max);
+  const frontRatio = (battleStrength(pc) / Math.max(1, fronts.length)) /
+    (battleStrength(ec, S.enemyAttackOrder?.commit || 0) / Math.max(1, frontierCellsOf('enemy').length) + 1);
+  const attackingIntoOrder = !!S.enemyAttackOrder;
+  if (pReadiness < 0.12 || pHeld < 0.28 || (frontRatio < 0.48 && !attackingIntoOrder)) return;
+  const initiative = clamp((frontRatio - 0.55) * 0.34 + (pReadiness - eReadiness) * 0.22 + (eHeld - pHeld) * 0.12, 0, 0.42);
+  const chance = clamp(0.025 + initiative + (attackingIntoOrder ? 0.08 : 0), 0, 0.60);
+  if (Math.random() > chance) return;
+
+  const scored = fronts.map(cell => {
+    const targets = cell.neighbors.filter(n => n.owner === 'enemy');
+    const pressure = targets.reduce((n,t) => n + t.neighbors.filter(x => x.owner === 'enemy').length, 0);
+    const distancePenalty = S.enemyAttackOrder ? Math.hypot(cell.c[0]-S.enemyAttackOrder.lat, cell.c[1]-S.enemyAttackOrder.lng) * 0.22 : 0;
+    return { cell, score: pressure - distancePenalty + Math.random()*0.35 };
+  }).sort((a,b) => b.score - a.score);
+  const focusCell = scored[0].cell;
+  const pct = clamp(0.12 + initiative * 0.65 + (attackingIntoOrder ? 0.08 : 0),
+                    C.AI_ATTACK_MIN_COMMIT_PCT, C.AI_ATTACK_MAX_COMMIT_PCT + 0.18);
+  const commit = Math.max(500, Math.floor(pc.troops * pct));
+  pc.troops -= commit;
+
+  const icon = L.divIcon({ className:'', iconAnchor:[0,0], html:'<div class="focusring"></div>' });
+  const marker = L.marker([focusCell.c[0], mapLng(focusCell.c[1])],
+                          { icon, zIndexOffset: 950, interactive:false }).addTo(map);
+  S.attackOrder = { lat: focusCell.c[0], lng: focusCell.c[1], commit, marker, intensityFrac: pct };
+}
+
+// ── AFK MODE: PLAYER-SIDE AI RETREAT ────────────────────────────
+// Mirror of maybeStartAIRetreat() above. Reuses the player's own
+// startRetreat() — the exact function a human triggers by clicking
+// their own territory — so the withdrawal plays out identically.
+function maybeStartPlayerRetreat(){
+  if (!S.autoMode || S.over || S.retreatOrder || S.attackOrder) return;
+  const pc = S.countries[S.pCode];
+  const ec = S.countries[S.eCode];
+  if (!pc || !ec) return;
+  const ratio = pc.troops / (pc.troops + ec.troops + 1);
+  if (ratio > 0.28) return;
+  if (Math.random() > 0.0015) return;
+
+  const pFronts = frontierCellsOf('player');
+  if (!pFronts.length) return;
+  const pCells = S.cells.filter(c => c.owner === 'player');
+  if (!pCells.length) return;
+
+  let fLat = 0, fLng = 0;
+  for (const c of pFronts){ fLat += c.c[0]; fLng += c.c[1]; }
+  fLat /= pFronts.length; fLng /= pFronts.length;
+  let cLat = 0, cLng = 0;
+  for (const c of pCells){ cLat += c.c[0]; cLng += c.c[1]; }
+  cLat /= pCells.length; cLng /= pCells.length;
+
+  const retLat = fLat + (cLat - fLat) * 0.35;
+  const retLng = fLng + (cLng - fLng) * 0.35;
+
+  const nearest = nearestAnyCell([retLat, retLng]);
+  if (!nearest || nearest.owner !== 'player') return;
+
+  startRetreat(retLat, retLng);
+}
+
 // ── COMBAT TICK ───────────────────────────────────────────────────
 // Combat only happens along two independent channels:
 //   • S.attackOrder       → the PLAYER explicitly ordered an offensive.
@@ -2115,10 +2290,15 @@ function combatTick(){
   enemyRetreatTick();
   // The enemy AI may occasionally decide to retreat when badly outnumbered.
   maybeStartAIRetreat();
+  // In AFK mode, the player's own side may also fall back when outnumbered.
+  maybeStartPlayerRetreat();
 
   // The enemy AI gets a chance to start a fresh offensive on its own,
   // completely independent of anything the player is doing.
   maybeStartAIAttack();
+  // In AFK mode, an AI commands the player's side too — same heuristics,
+  // mirrored — so the whole war can just be watched end to end.
+  maybeStartPlayerAI();
 
   const changed = [];
 
@@ -2546,8 +2726,8 @@ function regenTick(){
 // an ally can reinforce another member's border and then absorb losses there.
 function deployCoalitionFormations(side){
   const faction=S.countries[side==='player'?S.pCode:S.eCode];
-  if(!faction?.members?.length) return;
-  const members=faction.members.filter(code=>(faction.memberStats[code]?.troops||0)>0);
+  if(!faction?.rosterKeys?.length) return;
+  const members=faction.rosterKeys.filter(code=>(faction.memberStats[code]?.troops||0)>0);
   if(!members.length) return;
   const total=members.reduce((n,code)=>n+faction.memberStats[code].troops,0);
   const frontCells=frontierCellsOf(side);
@@ -2577,7 +2757,7 @@ function renderFlagsAndLabels(){
   for (const side of ['player','enemy']){
     deployCoalitionFormations(side);
     const faction=S.countries[side==='player'?S.pCode:S.eCode];
-    for (const country of faction?.members || []) syncFlags(side, country);
+    for (const country of faction?.rosterKeys || []) syncFlags(side, country);
   }
   drawTroopLabel('player');
   drawTroopLabel('enemy');
@@ -3704,6 +3884,22 @@ function toggleMute() {
   const btn = $('mbtn');
   if (S.muted) { if (S.audio) S.audio.pause(); btn.textContent = '🔇 UNMUTE'; btn.classList.add('on'); }
   else          { btn.textContent = '🔊 MUTE'; btn.classList.remove('on'); playTrack(); }
+}
+
+// ── AFK MODE / AUTOMODE ──────────────────────────────────────────
+// Hands the player's side to the same kind of AI already driving the
+// enemy: press it, sit back, and watch two AIs fight the whole war.
+function toggleAutoMode(){
+  S.autoMode = !S.autoMode;
+  const btn = $('afkbtn');
+  if (S.autoMode){
+    btn.textContent = '🤖 AFK: ON';
+    btn.classList.add('on');
+    S.playerAiNextRollAt = S.simMs + C.AI_ATTACK_GRACE_MS * 0.25;
+  } else {
+    btn.textContent = '🤖 AFK MODE';
+    btn.classList.remove('on');
+  }
 }
 
 // ── BACKGROUND VIDEO ────────────────────────────────────────────────
