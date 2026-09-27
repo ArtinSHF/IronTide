@@ -269,15 +269,18 @@ body{background:#060606;color:#ddd;font-family:'Courier New',monospace}
     <div class="gsub">Choose your nation · Deploy your forces · Conquer</div>
     <div id="lmsg">▸ LOADING WORLD DATA...</div>
     <div id="lbwrap"><div id="lbar"></div></div>
-    <div id="continueWrap" style="display:none;margin-bottom:14px;text-align:center">
-      <button class="cbtn on" style="padding:10px 22px;font-size:14px" onclick="continueWar()">▶ CONTINUE WAR</button>
-      <div id="continueMeta" style="font-size:11px;color:#888;margin-top:6px"></div>
-    </div>
     <div id="selwrap">
       <div class="sgrp">
         <span class="slbl">YOUR NATION</span>
         <select id="psel"><option value="">— SELECT —</option></select>
         <div id="campaignNote" style="display:none;font-size:11px;color:#8fd694;margin-top:6px"></div>
+      </div>
+      <div id="campaignChoice" style="display:none;margin-bottom:16px;text-align:center;border:1px solid #2a2a2a;background:rgba(10,10,10,.5);padding:14px">
+        <div id="campaignChoiceMeta" style="font-size:11px;color:#8fd694;margin-bottom:10px"></div>
+        <div style="display:flex;gap:10px;justify-content:center">
+          <button class="cbtn on" style="padding:9px 16px;font-size:12px" onclick="chooseContinueCampaign()">▶ CONTINUE</button>
+          <button class="cbtn" style="padding:9px 16px;font-size:12px" onclick="chooseNewCampaign()">↺ NEW GAME</button>
+        </div>
       </div>
       <div class="diplo" id="diplo">
         <div class="diploTop"><span class="diploTitle">BUILD YOUR <b>WAR PLAN</b></span><input id="dipsearch" placeholder="Search countries…" autocomplete="off"></div>
@@ -331,8 +334,6 @@ body{background:#060606;color:#ddd;font-family:'Courier New',monospace}
     <button class="cbtn" id="mbtn" onclick="toggleMute()">🔊 MUTE</button>
     <div class="csep"></div>
     <button class="cbtn" id="afkbtn" onclick="toggleAutoMode()" title="Let the AI command your side — sit back and watch">🤖 AFK MODE</button>
-    <div class="csep"></div>
-    <button class="cbtn" onclick="saveAndExit()" title="Save this war and return to the menu — CONTINUE WAR resumes it exactly">💾 SAVE &amp; EXIT</button>
     <div class="csep"></div>
     <span class="spdlbl">SPEED</span>
     <button class="cbtn on" id="s1" onclick="setSpeed(1)">1×</button>
@@ -449,11 +450,8 @@ body{background:#060606;color:#ddd;font-family:'Courier New',monospace}
 // ║  • Combat is mostly order-driven, plus one autonomous channel: ║
 // ║      – Click ENEMY land → opens an ATTACK ORDER modal.         ║
 // ║        Confirm and your troops push toward that point.         ║
-// ║      – Click YOUR OWN land → opens a MOVE ORDER modal. Your    ║
-// ║        troops redeploy (muster) toward that point — use it to  ║
-// ║        retreat, regroup, or shift reserves before an attack.   ║
-// ║        Pulling troops off the border weakens it for real: the  ║
-// ║        enemy can then advance into ground you've abandoned.    ║
+// ║      – Clicking your own land does nothing — there is no        ║
+// ║        retreat/move order. Your front simply holds and defends. ║
 // ║      – The ENEMY AI periodically decides to attack on its own, ║
 // ║        independent of anything the player does. While that's  ║
 // ║        active, the player's troops near the contested front    ║
@@ -522,10 +520,6 @@ const C = {
   // ── war-ending thresholds ─
   FORCE_PEACE_TERRITORY: 0.95,  // hold ≥95% of enemy coalition land to force a victorious peace
 
-  // ─ retreat / move orders ─
-  MOVE_ORDER_COMMIT_PCT:   0.6,   // fixed share of troops that muster on retreat (no slider)
-  RETREAT_CEDE_FRACTION:   0.30,  // share of the NEAREST frontier sector ceded instantly on retreat
-
   // ─ flag density (soldiers represented per flag, by army size) ─
   FLAG_TIER1_MAX:     1_000_000,  // below this →  1 flag per FLAG_DIV_LOW
   FLAG_TIER2_MAX:     5_000_000,  // below this →  1 flag per FLAG_DIV_MID
@@ -551,11 +545,13 @@ const C = {
 
   // ─ AFK MODE: player-side AI is deliberately more decisive/continuous
   // than the single enemy AI — it's meant to actually run the whole war,
-  // not just occasionally poke at it.
-  PLAYER_AI_CHECK_MS:        700,   // re-evaluates far more often than the enemy's 2000ms
-  PLAYER_AI_MIN_COMMIT_PCT:  0.16,
-  PLAYER_AI_MAX_COMMIT_PCT:  0.55,
-  PLAYER_AI_MIN_TROOPS_FRAC: 0.04,
+  // not just occasionally poke at it. Tuned aggressive: checks often,
+  // commits harder, and is willing to press marginal opportunities that
+  // the steadier enemy AI would pass on (see decideFactionAction).
+  PLAYER_AI_CHECK_MS:        450,   // re-evaluates far more often than the enemy's 1200ms
+  PLAYER_AI_MIN_COMMIT_PCT:  0.20,
+  PLAYER_AI_MAX_COMMIT_PCT:  0.65,
+  PLAYER_AI_MIN_TROOPS_FRAC: 0.03,
 
   // ─ long-range invasions ─
   // Movement uses simulation time so the speed controls apply naturally.
@@ -732,9 +728,7 @@ const S = {
   // ─ orders (ONLY way combat / movement happens) ─
   attackOrder: null,      // { lat, lng, commit, marker, phase? } — player-issued
   moveOrder:   null,      // { lat, lng, expires, marker, commit } — kept for compat
-  retreatOrder: null,     // { lat, lng, retreatCells, lineLayer, enemyDirLat, enemyDirLng } — new retreat system
   enemyAttackOrder: null, // { lat, lng, commit, marker, until } — AI-issued
-  enemyRetreatOrder: null,// { retreatCells, lineLayer, enemyDirLat, enemyDirLng } — AI retreat
   aiNextRollAt: 0,        // next time the enemy AI is allowed to roll for an attack
   autoMode: false,        // AFK / Automode — AI plays the player's side too
   playerAiNextRollAt: 0,  // next time the player-side AFK AI is allowed to roll for an attack
@@ -945,40 +939,55 @@ function annexConqueredTerritory(){
 // selections — the grid this produces is always the same for the same
 // selections) and overlay the saved per-cell ownership and per-nation
 // troop/casualty state on top of it.
-const WAR_SAVE_KEY = 'irontide_war_save_v1';
+//
+// Saves are keyed by the PLAYER'S selection code (their country or
+// empire), not a single global slot — so picking Germany always shows
+// Germany's own unfinished war, even if France or Italy was played
+// (and saved) more recently in between.
+const WAR_SAVE_KEY = 'irontide_war_save_v2';
+function loadAllWarSaves(){
+  try { return JSON.parse(localStorage.getItem(WAR_SAVE_KEY) || '{}'); }
+  catch { return {}; }
+}
 function saveWarInProgress(){
   if (!S.pCode || !S.eCode || S.over) return false;
   if (S.attackOrder) clearAttackOrder(true);
   if (S.moveOrder) clearMoveOrder();
-  if (S.retreatOrder) clearRetreatOrder();
   if (S.enemyAttackOrder) clearEnemyAttackOrder(true);
-  if (S.enemyRetreatOrder) clearEnemyRetreatOrder();
   const pc = S.countries[S.pCode], ec = S.countries[S.eCode];
+  const playerKey = S.selections?.player;
+  if (!playerKey) return false;
   const save = {
-    v: 1, savedAtMs: Date.now(),
+    v: 2, savedAtMs: Date.now(),
     selections: S.selections,
     simMs: S.simMs, cas: S.cas,
     pTroops: pc.troops, eTroops: ec.troops,
     pStats: pc.memberStats, eStats: ec.memberStats,
     cells: S.cells.map(c => [c.ix, c.iy, c.owner, c.flagCountry, c.origCountry, c.homeSide]),
   };
-  try { localStorage.setItem(WAR_SAVE_KEY, JSON.stringify(save)); return true; }
-  catch { return false; }
-}
-function loadSavedWarMeta(){
   try {
-    const raw = localStorage.getItem(WAR_SAVE_KEY);
-    if (!raw) return null;
-    const save = JSON.parse(raw);
-    return { savedAtMs: save.savedAtMs, player: save.selections?.player, enemy: save.selections?.enemy?.[0] };
-  } catch { return null; }
+    const all = loadAllWarSaves();
+    all[playerKey] = save;
+    localStorage.setItem(WAR_SAVE_KEY, JSON.stringify(all));
+    return true;
+  } catch { return false; }
 }
-function clearSavedWar(){
-  try { localStorage.removeItem(WAR_SAVE_KEY); } catch {}
+// Meta for one specific player selection's saved war, if any.
+function loadSavedWarMetaFor(playerCode){
+  if (!playerCode) return null;
+  const save = loadAllWarSaves()[playerCode];
+  if (!save) return null;
+  return { savedAtMs: save.savedAtMs, player: save.selections?.player, enemy: save.selections?.enemy?.[0] };
 }
-function continueWar(){
-  let save;
-  try { save = JSON.parse(localStorage.getItem(WAR_SAVE_KEY) || 'null'); } catch { save = null; }
+function clearSavedWarFor(playerCode){
+  if (!playerCode) return;
+  try {
+    const all = loadAllWarSaves();
+    if (all[playerCode]){ delete all[playerCode]; localStorage.setItem(WAR_SAVE_KEY, JSON.stringify(all)); }
+  } catch {}
+}
+function continueWarFor(playerCode){
+  const save = loadAllWarSaves()[playerCode];
   if (!save) return;
 
   const sel = save.selections;
@@ -1115,19 +1124,53 @@ function fillMenu() {
   ps.onchange = () => {
     S.pCode = ps.value || null;
     S.diplomacy = { allies:new Set(), enemies:new Set() };
-    rebuildEnemy();
     updateCampaignNote();
+    applyCampaignChoiceUI();
   };
   updateCampaignNote();
-
-  const meta = loadSavedWarMeta();
-  if (meta){
-    $('continueWrap').style.display = 'block';
-    const when = new Date(meta.savedAtMs).toLocaleString();
-    const pName = S.countries[meta.player]?.name || meta.player;
-    const eName = S.countries[meta.enemy]?.name || meta.enemy;
-    $('continueMeta').textContent = `${pName} vs ${eName} · saved ${when}`;
+  applyCampaignChoiceUI();
+}
+// Decides, for whichever nation/empire is currently selected, whether to
+// show the NEW GAME / CONTINUE choice (a saved war exists for exactly
+// this selection) or go straight to the normal war-plan/diplomacy flow.
+function applyCampaignChoiceUI(){
+  const choice = $('campaignChoice');
+  if (!S.pCode){
+    choice.style.display = 'none';
+    $('diplo').style.display = 'none';
+    $('sbtn').style.display = '';
+    return;
   }
+  const meta = loadSavedWarMetaFor(S.pCode);
+  if (meta){
+    choice.style.display = 'block';
+    $('diplo').style.display = 'none';
+    $('sbtn').style.display = 'none';
+    const when = new Date(meta.savedAtMs).toLocaleString();
+    const pName = S.countries[S.pCode]?.name || S.pCode;
+    const eName = S.countries[meta.enemy]?.name || meta.enemy;
+    $('campaignChoiceMeta').innerHTML =
+      `You have a war in progress as <b>${pName}</b> vs ${eName} — saved ${when}.`;
+  } else {
+    choice.style.display = 'none';
+    $('sbtn').style.display = '';
+    rebuildEnemy();
+  }
+}
+// CONTINUE: resume the saved war for the currently selected nation/empire
+// exactly where it was left, including any mid-war conquered territory.
+function chooseContinueCampaign(){
+  if (!S.pCode) return;
+  continueWarFor(S.pCode);
+}
+// NEW GAME: ignore the in-progress save for this selection (it stays on
+// disk untouched unless/until overwritten) and start completely fresh —
+// still folding in territory permanently annexed from past VICTORIES
+// (see selectionMembers/persistentTerritory), just not this unfinished war.
+function chooseNewCampaign(){
+  $('campaignChoice').style.display = 'none';
+  $('sbtn').style.display = '';
+  rebuildEnemy();
 }
 // Shows accumulated campaign territory for whichever nation is currently
 // selected, and lets it be cleared — so growth from past wars is visible
@@ -1867,7 +1910,7 @@ function refreshCells(cells){
 // ── ORDER MODAL ──────────────────────────────────────────────────
 // A SINGLE click on the map opens the appropriate order modal.
 //   • Click on enemy land    → ATTACK ORDER (red modal, troop % slider).
-//   • Click on your own land → RETREAT/MOVE ORDER (blue modal, fixed %).
+//   • Click on your own land → ignored (no retreat/move order).
 //   • Click on sea / neutral → ignored.
 function openOrderModal(latlng){
   const pc = S.countries[S.pCode];
@@ -1876,38 +1919,28 @@ function openOrderModal(latlng){
   const target = nearestAnyCell([latlng.lat, latlng.lng]);
   if (!target) return; // outside both countries → ignore
 
-  const isAttack = target.owner === 'enemy';
+  // Only enemy land opens an order modal. There is no retreat/move
+  // order any more — clicking your own territory does nothing.
+  if (target.owner !== 'enemy') return;
 
   S.pending = {
     lat: target.c[0],
     lng: target.c[1],
-    type: isAttack ? 'attack' : 'move',
+    type: 'attack',
   };
 
   const box = $('abox');
   const ec  = S.countries[S.eCode];
   const slider = $('aslider'), pctrow = $('pctrow');
-  if (isAttack){
-    box.classList.remove('move');
-    $('atitle').textContent = '⚔ ATTACK ORDER';
-    $('ainf').innerHTML =
-      `<img src="${ec.flagUrl}" alt=""> Push toward <b>${ec.name}</b> sector<br>
-       <span style="color:#888">Your front line will surge toward the marker. Without this order, your troops will hold their positions.</span>`;
-    slider.style.display = '';
-    pctrow.style.display = '';
-    slider.value = 50;
-    updSlider();
-  } else {
-    box.classList.add('move');
-    $('atitle').textContent = '⇄ RETREAT ORDER';
-    $('ainf').innerHTML =
-      `<img src="${pc.flagUrl}" alt=""> New defensive line — <b>${pc.name}</b><br>
-       <span style="color:#888">A retreat line is drawn here. All forces forward of it withdraw gradually while the enemy advances at heavy cost. Troops hold once they reach the new line.</span>`;
-    // Retreats use no percentage slider — it's a territory-based withdrawal.
-    slider.style.display = 'none';
-    pctrow.style.display = 'none';
-    $('acnt').innerHTML = `RETREAT<span>All forward forces withdraw to this line</span>`;
-  }
+  box.classList.remove('move');
+  $('atitle').textContent = '⚔ ATTACK ORDER';
+  $('ainf').innerHTML =
+    `<img src="${ec.flagUrl}" alt=""> Push toward <b>${ec.name}</b> sector<br>
+     <span style="color:#888">Your front line will surge toward the marker. Without this order, your troops will hold their positions.</span>`;
+  slider.style.display = '';
+  pctrow.style.display = '';
+  slider.value = 50;
+  updSlider();
   $('atk').style.display = 'flex';
 }
 function updSlider() {
@@ -1918,58 +1951,43 @@ function updSlider() {
 function closeAtk() { $('atk').style.display = 'none'; S.pending = null; }
 
 function confirmAction(){
-  if (!S.pending) return;
-  const isAttack = S.pending.type === 'attack';
-  const pct = isAttack ? (+$('aslider').value / 100) : C.MOVE_ORDER_COMMIT_PCT;
+  if (!S.pending || S.pending.type !== 'attack') return;
+  const pct = +$('aslider').value / 100;
   const pc  = S.countries[S.pCode];
   const commit = Math.max(500, Math.floor(pc.troops * pct));
   if (commit > pc.troops - 200) { closeAtk(); return; }
 
   pc.troops -= commit;
 
-  if (isAttack){
-    // Cancel any prior move/retreat order — you can have ONE active order.
-    clearMoveOrder();
-    clearRetreatOrder();
-    // Issue / refresh the attack order.
-    if (S.attackOrder){
-      S.attackOrder.lat = S.pending.lat;
-      S.attackOrder.lng = S.pending.lng;
-      S.attackOrder.commit += commit;
-      // Update intensity to the latest slider position so the player can
-      // change attack power mid-battle by issuing a new order.
-      S.attackOrder.intensityFrac = pct;
-      if (S.attackOrder.marker) S.attackOrder.marker.setLatLng([S.pending.lat, mapLng(S.pending.lng)]);
-      // Reinforcements join a force already in transit; a redirected convoy
-      // continues from its original departure point instead of teleporting.
-      if (S.attackOrder.phase==='travel') S.attackOrder.targetCell=nearestAnyCell([S.pending.lat,S.pending.lng]);
-    } else {
-      const icon = L.divIcon({
-        className:'', iconAnchor:[0,0],
-        html:`<div class="focusring"></div>`
-      });
-      const marker = L.marker([S.pending.lat, mapLng(S.pending.lng)],
-                              { icon, zIndexOffset: 950, interactive:false }).addTo(map);
-      S.attackOrder = {
-        lat: S.pending.lat, lng: S.pending.lng,
-        commit, marker,
-        // intensityFrac is the slider value (0.01–0.99).  It directly
-        // scales per-cell flip probability AND max flips per tick so
-        // committing 1% genuinely feels weaker than committing 99%.
-        intensityFrac: pct,
-      };
-      const target=nearestAnyCell([S.pending.lat,S.pending.lng]);
-      if(target && needsLongRangeInvasion(target)) beginLongRangeInvasion(S.attackOrder,target);
-    }
+  // Issue / refresh the attack order.
+  if (S.attackOrder){
+    S.attackOrder.lat = S.pending.lat;
+    S.attackOrder.lng = S.pending.lng;
+    S.attackOrder.commit += commit;
+    // Update intensity to the latest slider position so the player can
+    // change attack power mid-battle by issuing a new order.
+    S.attackOrder.intensityFrac = pct;
+    if (S.attackOrder.marker) S.attackOrder.marker.setLatLng([S.pending.lat, mapLng(S.pending.lng)]);
+    // Reinforcements join a force already in transit; a redirected convoy
+    // continues from its original departure point instead of teleporting.
+    if (S.attackOrder.phase==='travel') S.attackOrder.targetCell=nearestAnyCell([S.pending.lat,S.pending.lng]);
   } else {
-    // RETREAT ORDER — cancel any active attack. No troops are deducted;
-    // this is a territory-based withdrawal, not a committed force.
-    // Refund the commit we deducted above since retreat doesn't use it.
-    pc.troops += commit;
-    clearAttackOrder(true);
-    clearMoveOrder();
-    clearRetreatOrder();
-    startRetreat(S.pending.lat, S.pending.lng);
+    const icon = L.divIcon({
+      className:'', iconAnchor:[0,0],
+      html:`<div class="focusring"></div>`
+    });
+    const marker = L.marker([S.pending.lat, mapLng(S.pending.lng)],
+                            { icon, zIndexOffset: 950, interactive:false }).addTo(map);
+    S.attackOrder = {
+      lat: S.pending.lat, lng: S.pending.lng,
+      commit, marker,
+      // intensityFrac is the slider value (0.01–0.99).  It directly
+      // scales per-cell flip probability AND max flips per tick so
+      // committing 1% genuinely feels weaker than committing 99%.
+      intensityFrac: pct,
+    };
+    const target=nearestAnyCell([S.pending.lat,S.pending.lng]);
+    if(target && needsLongRangeInvasion(target)) beginLongRangeInvasion(S.attackOrder,target);
   }
 
   refreshOrderHUD();
@@ -1999,50 +2017,6 @@ function clearMoveOrder(){
     map.removeLayer(S.moveOrder.marker);
   S.moveOrder = null;
 }
-// Retreating has a real, immediate cost: the stretch of YOUR frontier
-// closest to the muster point — the sector you're pulling back from —
-// is ceded to the enemy right away. Only that local sector (plus a
-// small organic buffer so the new edge isn't a razor-straight cut)
-// changes hands; the rest of the front is untouched.
-function applyRetreatCession(){
-  if (!S.moveOrder) return;
-  const fronts = frontierCellsOf('player');
-  if (!fronts.length) return;
-
-  const withDist = fronts.map(c => ({
-    c, d: Math.hypot(c.c[0] - S.moveOrder.lat, c.c[1] - S.moveOrder.lng),
-  }));
-  withDist.sort((a, b) => a.d - b.d);
-
-  const cedeCount = Math.max(1, Math.round(fronts.length * C.RETREAT_CEDE_FRACTION));
-  const core = withDist.slice(0, cedeCount).map(x => x.c);
-  const coreSet = new Set(core);
-
-  // Small natural buffer: a few cells directly touching the ceded
-  // core also go, so the new edge looks organic rather than a clean
-  // geometric cut.
-  const buffer = [];
-  for (const c of core){
-    for (const nb of c.neighbors){
-      if (nb.owner === 'player' && !coreSet.has(nb) && Math.random() < 0.35){
-        buffer.push(nb);
-      }
-    }
-  }
-
-  const changed = [];
-  for (const c of core.concat(buffer)){
-    setCellOwner(c, 'enemy');
-    changed.push(c);
-    for (const nb of c.neighbors) changed.push(nb);
-  }
-
-  if (changed.length){
-    refreshCells(changed);
-    recountCells();
-    checkWin();
-  }
-}
 // Ends the enemy AI's own attack (naturally, on expiry/depletion — the
 // player never controls this). Any unspent commit pool is refunded to
 // the enemy's troop pool.
@@ -2059,248 +2033,12 @@ function clearEnemyAttackOrder(refund){
   S.enemyAttackOrder = null;
 }
 
-// ═══════════════════════════════════════════════════════════════════
-// ║  FIX 4 — RETREAT SYSTEM                                         ║
-// ║  Retreat is now a LINE order (not a single point marker).        ║
-// ║  Clicking own territory draws a dashed defensive line across the  ║
-// ║  territory. All player cells "forward" of that line (between it   ║
-// ║  and the enemy) are gradually handed to the enemy over several   ║
-// ║  ticks. Player casualties during the withdrawal are minimal;     ║
-// ║  the enemy advancing into vacated ground suffers heavily.        ║
-// ║  Once all forward cells are ceded, troops hold the new line.     ║
-// ║  The enemy AI will rarely trigger the same behaviour.            ║
-// ═══════════════════════════════════════════════════════════════════
-
-// Compute direction vector from (lat,lng) toward the average position
-// of ALL currently enemy-owned cells, normalised to unit length.
-function enemyDirectionFrom(lat, lng){
-  const eCells = S.cells.filter(c => c.owner === 'enemy');
-  if (!eCells.length) return { dLat: 0, dLng: 1 };
-  let eLat = 0, eLng = 0;
-  for (const c of eCells){ eLat += c.c[0]; eLng += c.c[1]; }
-  eLat /= eCells.length; eLng /= eCells.length;
-  const dLat = eLat - lat, dLng = eLng - lng;
-  const len  = Math.sqrt(dLat*dLat + dLng*dLng) || 1;
-  return { dLat: dLat/len, dLng: dLng/len };
-}
-
-// All player cells whose position is "forward" of the retreat line,
-// i.e. on the enemy side of it.  Uses the dot product along the
-// unit direction-to-enemy vector.
-function computeRetreatCells(lat, lng, dLat, dLng){
-  return S.cells.filter(c => {
-    if (c.owner !== 'player') return false;
-    const cLat = c.c[0] - lat, cLng = c.c[1] - lng;
-    return (cLat * dLat + cLng * dLng) > 0;
-  });
-}
-
-// Draw a dashed polyline perpendicular to the enemy direction through
-// (lat, lng), spanning the full width of the player's territory.
-function drawRetreateLineLayer(lat, lng, dLat, dLng, color){
-  // Perpendicular direction (rotate 90°): swap & negate
-  const perpLat = -dLng, perpLng = dLat;
-  const ext = 6; // extend 6° each way
-  const pts = [
-    [lat + perpLat * ext, lng + perpLng * ext],
-    [lat - perpLat * ext, lng - perpLng * ext],
-  ];
-  return L.polyline(pts, {
-    color,
-    weight: 3.5,
-    opacity: 0.92,
-    dashArray: '14 8',
-    lineCap: 'butt',
-    interactive: false,
-  }).addTo(map);
-}
-
-// Kick off a player retreat to the line at (lat, lng).
-function startRetreat(lat, lng){
-  const dir = enemyDirectionFrom(lat, lng);
-  const retreatCells = computeRetreatCells(lat, lng, dir.dLat, dir.dLng);
-  if (!retreatCells.length){
-    // Nothing forward of this line — already holding here, nothing to do.
-    return;
-  }
-  const lineLayer = drawRetreateLineLayer(lat, lng, dir.dLat, dir.dLng, '#5e8eff');
-  S.retreatOrder = {
-    lat, lng,
-    retreatCells,
-    lineLayer,
-    enemyDirLat: dir.dLat,
-    enemyDirLng: dir.dLng,
-  };
-}
-
-// Clear the player's retreat order (used by cancelOrder / completion).
-function clearRetreatOrder(){
-  if (!S.retreatOrder) return;
-  if (S.retreatOrder.lineLayer && map.hasLayer(S.retreatOrder.lineLayer))
-    map.removeLayer(S.retreatOrder.lineLayer);
-  S.retreatOrder = null;
-}
-
-// Called from combatTick — gradually cedes cells in the retreat zone.
-// Uses a projection-based wavefront so every section of the front
-// retreats at the same pace simultaneously (no sequential left-to-right).
-function retreatTick(){
-  const order = S.retreatOrder;
-  if (!order) return;
-  const pc = S.countries[S.pCode];
-  const ec = S.countries[S.eCode];
-
-  // All retreat-zone cells still held by the player.
-  const stillOwned = order.retreatCells.filter(c => c.owner === 'player');
-  if (stillOwned.length === 0){
-    clearRetreatOrder();
-    refreshOrderHUD();
-    return;
-  }
-
-  // Sort by forward projection along the enemy-direction vector:
-  // cells that are most "forward" (closest to the enemy) come first.
-  // Sorting ALL owned retreat cells this way means EVERY section of
-  // the front contributes to each tick's batch simultaneously —
-  // a uniform wavefront rather than one flank retreating at a time.
-  stillOwned.sort((a, b) => {
-    const aP = a.c[0]*order.enemyDirLat + a.c[1]*order.enemyDirLng;
-    const bP = b.c[0]*order.enemyDirLat + b.c[1]*order.enemyDirLng;
-    return bP - aP; // descending: most forward first
-  });
-
-  // Cede ~5 % of the remaining retreat zone per tick — gradual but
-  // uniform across all fronts.
-  const cedeCount = Math.max(1, Math.ceil(stillOwned.length * 0.05));
-  const changed = [];
-
-  for (let i = 0; i < cedeCount; i++){
-    const c = stillOwned[i];
-    const withdrawingFormation=c.flagCountry;
-    setCellOwner(c, 'enemy');
-    changed.push(c);
-    for (const nb of c.neighbors) changed.push(nb);
-
-    // Retreating player: barely any casualties (defender modifier applies).
-    const pLoss = pc.max * 0.0000056 * (0.4 + Math.random() * 0.6) * C.DEF_CAS_MULT;
-    // Enemy advancing into contested ground: heavy toll (attacker modifier).
-    const eLoss = ec.max * 0.000098  * (0.7 + Math.random() * 0.6) * C.ATK_CAS_MULT;
-    const pActual=applyFactionLoss(pc, pLoss, withdrawingFormation);
-    const eActual=applyFactionLoss(ec, eLoss, formationForCapture(c, 'enemy'));
-    S.cas.p += pActual;
-    S.cas.e += eActual;
-  }
-
-  if (changed.length){ refreshCells(changed); recountCells(); checkWin(); }
-}
-
-// ── ENEMY AI RETREAT ──────────────────────────────────────────────
-// Rarely, when the enemy is badly outnumbered, the AI falls back to a
-// new defensive line inside its own territory.
-function maybeStartAIRetreat(){
-  if (S.over || S.enemyRetreatOrder || S.enemyAttackOrder) return;
-  const ec = S.countries[S.eCode];
-  const pc = S.countries[S.pCode];
-  if (!shouldRetreat('enemy')) return;
-
-  // Pick a retreat point: roughly 1/3 of the way from the enemy front
-  // back into enemy territory — far enough to matter, not so far that
-  // the AI surrenders half its country at once.
-  const eFronts = frontierCellsOf('enemy');
-  if (!eFronts.length) return;
-  const eCells = S.cells.filter(c => c.owner === 'enemy');
-  if (!eCells.length) return;
-
-  let fLat = 0, fLng = 0;
-  for (const c of eFronts){ fLat += c.c[0]; fLng += c.c[1]; }
-  fLat /= eFronts.length; fLng /= eFronts.length;
-  let cLat = 0, cLng = 0;
-  for (const c of eCells){ cLat += c.c[0]; cLng += c.c[1]; }
-  cLat /= eCells.length; cLng /= eCells.length;
-
-  // Retreat to ~35% of the way from front toward territory centre.
-  const retLat = fLat + (cLat - fLat) * 0.35;
-  const retLng = fLng + (cLng - fLng) * 0.35;
-
-  const nearest = nearestAnyCell([retLat, retLng]);
-  if (!nearest || nearest.owner !== 'enemy') return;
-
-  startEnemyRetreat(retLat, retLng);
-}
-
-function startEnemyRetreat(lat, lng){
-  // Enemy direction from AI's retreat point is toward the PLAYER.
-  const pCells = S.cells.filter(c => c.owner === 'player');
-  if (!pCells.length) return;
-  let pLat = 0, pLng = 0;
-  for (const c of pCells){ pLat += c.c[0]; pLng += c.c[1]; }
-  pLat /= pCells.length; pLng /= pCells.length;
-  const rawLat = pLat - lat, rawLng = pLng - lng;
-  const len = Math.sqrt(rawLat*rawLat + rawLng*rawLng) || 1;
-  const dLat = rawLat/len, dLng = rawLng/len;
-
-  const retreatCells = S.cells.filter(c => {
-    if (c.owner !== 'enemy') return false;
-    const cLat = c.c[0] - lat, cLng = c.c[1] - lng;
-    return (cLat * dLat + cLng * dLng) > 0;
-  });
-  if (!retreatCells.length) return;
-
-  const lineLayer = drawRetreateLineLayer(lat, lng, dLat, dLng, '#ff9d2b');
-  S.enemyRetreatOrder = { lat, lng, retreatCells, lineLayer, enemyDirLat: dLat, enemyDirLng: dLng };
-}
-
-function clearEnemyRetreatOrder(){
-  if (!S.enemyRetreatOrder) return;
-  if (S.enemyRetreatOrder.lineLayer && map.hasLayer(S.enemyRetreatOrder.lineLayer))
-    map.removeLayer(S.enemyRetreatOrder.lineLayer);
-  S.enemyRetreatOrder = null;
-}
-
-// Mirror of retreatTick for the AI side — same simultaneous wavefront logic.
-function enemyRetreatTick(){
-  const order = S.enemyRetreatOrder;
-  if (!order) return;
-  const ec = S.countries[S.eCode];
-  const pc = S.countries[S.pCode];
-
-  const stillOwned = order.retreatCells.filter(c => c.owner === 'enemy');
-  if (stillOwned.length === 0){
-    clearEnemyRetreatOrder();
-    return;
-  }
-
-  // Sort by forward projection (toward player) — most exposed first,
-  // all fronts recede simultaneously.
-  stillOwned.sort((a, b) => {
-    const aP = a.c[0]*order.enemyDirLat + a.c[1]*order.enemyDirLng;
-    const bP = b.c[0]*order.enemyDirLat + b.c[1]*order.enemyDirLng;
-    return bP - aP;
-  });
-
-  const cedeCount = Math.max(1, Math.ceil(stillOwned.length * 0.05));
-  const changed = [];
-  for (let i = 0; i < cedeCount; i++){
-    const c = stillOwned[i];
-    const withdrawingFormation=c.flagCountry;
-    setCellOwner(c, 'player');
-    changed.push(c);
-    for (const nb of c.neighbors) changed.push(nb);
-    const eLoss = ec.max * 0.0000056 * (0.4 + Math.random() * 0.6) * C.DEF_CAS_MULT;
-    const pLoss = pc.max * 0.000098  * (0.7 + Math.random() * 0.6) * C.ATK_CAS_MULT;
-    const eActual=applyFactionLoss(ec, eLoss, withdrawingFormation);
-    const pActual=applyFactionLoss(pc, pLoss, formationForCapture(c, 'player'));
-    S.cas.e += eActual; S.cas.p += pActual;
-  }
-  if (changed.length){ refreshCells(changed); recountCells(); checkWin(); }
-}
 // Player-triggered "STAND DOWN": cancel everything, refund all
 // committed troops to the country pool. This is the explicit way to
 // stop fighting and return to a pure defensive posture.
 function cancelOrder(){
   clearAttackOrder(true);
   clearMoveOrder();
-  clearRetreatOrder();
   refreshOrderHUD();
 }
 
@@ -2314,13 +2052,6 @@ function refreshOrderHUD(){
       o.textContent = `▶ ATTACK ORDER · ${fmt(S.attackOrder.commit)} committed`;
     }
     o.style.color = '#ff8080';
-    btn.style.display = 'inline-block';
-  } else if (S.retreatOrder){
-    const remaining = S.retreatOrder.retreatCells.filter(c => c.owner === 'player').length;
-    const total     = S.retreatOrder.retreatCells.length;
-    const pct = total > 0 ? Math.round((1 - remaining/total)*100) : 100;
-    o.textContent = `⇄ RETREATING · ${pct}% withdrawn`;
-    o.style.color = '#5e8eff';
     btn.style.display = 'inline-block';
   } else if (S.moveOrder){
     o.textContent = `⇄ MOVE ORDER · ${fmt(S.moveOrder.commit)} mustering`;
@@ -2372,46 +2103,28 @@ function localOpposingForce(group, foeFieldForce, foeGroups, foeTotalFront, othe
   const touchedTotal = touchedGroups.reduce((n,fg) => n+fg.length, 0) || touching.size;
   return foeFieldForce * (touchedTotal / Math.max(1, foeTotalFront));
 }
-function shouldRetreat(side){
-  const other = side==='player' ? 'enemy' : 'player';
-  const mine = S.countries[side==='player'?S.pCode:S.eCode];
-  const foe  = S.countries[other==='player'?S.pCode:S.eCode];
-  if (!mine || !foe) return false;
-  const readiness = mine.troops / Math.max(1, mine.max);
-  if (readiness < 0.10) return true; // critically depleted regardless of anything else
-  const myGroups = frontGroups(side);
-  if (!myGroups.length) return false;
-  const foeGroups = frontGroups(other);
-  const myTotalFront = myGroups.reduce((n,g)=>n+g.length,0) || 1;
-  const foeTotalFront = foeGroups.reduce((n,g)=>n+g.length,0) || 1;
-  const myOrder  = side==='player' ? S.attackOrder : S.enemyAttackOrder;
-  const foeOrder = side==='player' ? S.enemyAttackOrder : S.attackOrder;
-  const myFieldForce  = mine.troops + (myOrder?.commit||0);
-  const foeFieldForce = foe.troops + (foeOrder?.commit||0);
-  let worst = Infinity;
-  for (const g of myGroups){
-    if (!g.some(c => frontierTouching(c, other))) continue;
-    const localMine = myFieldForce * (g.length/myTotalFront);
-    const localFoe = localOpposingForce(g, foeFieldForce, foeGroups, foeTotalFront, other);
-    worst = Math.min(worst, localMine / Math.max(1, localFoe));
-  }
-  // Badly overmatched on our weakest held sector AND no reserve left to
-  // reinforce it — that's when falling back beats holding a doomed line.
-  return worst < 0.32 && readiness < 0.4;
-}
 // The core call: look at every connected sector we hold, weigh it against
-// what's actually facing it, and either commit to the best opportunity,
-// fall back from an untenable position, or hold — genuinely do nothing.
+// what's actually facing it, and either commit to the best opportunity or
+// hold — genuinely do nothing. There is no retreat/fallback action any
+// more: a badly outnumbered side simply holds and defends where it
+// stands (defense is automatic and independent of this decision).
 function decideFactionAction(side){
   const other = side==='player' ? 'enemy' : 'player';
   const mine = S.countries[side==='player'?S.pCode:S.eCode];
   const foe  = S.countries[other==='player'?S.pCode:S.eCode];
   if (!mine || !foe) return { action:'hold' };
 
-  const myGroups = frontGroups(side);
-  if (!myGroups.length) return { action:'invade' }; // no land front — only overseas landings make sense
+  // AFK mode (player side) runs a noticeably more aggressive version of
+  // this brain — it's meant to actually run the whole war, not just
+  // occasionally poke at it. The enemy AI keeps the original, steadier
+  // thresholds so it stays a fair, capable opponent rather than reckless.
+  const aggressive = side === 'player';
 
-  if (shouldRetreat(side)) return { action:'retreat' };
+  const myGroups = frontGroups(side);
+  if (!myGroups.length){
+    // No land front at all — only an overseas landing makes sense.
+    return { action:'invade' };
+  }
 
   const foeGroups = frontGroups(other);
   const myTotalFront  = myGroups.reduce((n,g)=>n+g.length,0) || 1;
@@ -2434,14 +2147,41 @@ function decideFactionAction(side){
     const score = ratio + exposure*0.012 + continuing + (Math.random()*0.08 - 0.04);
     if (!best || score > best.score) best = { g, ratio, score };
   }
-  if (!best) return { action:'hold' };
+
+  // Nothing worth pressing on land right now. Rather than sit completely
+  // idle, an aggressive (AFK) side looks for an overseas opportunity —
+  // a weaker front elsewhere is exactly when a naval landing keeps the
+  // pressure on instead of just watching the front line freeze.
+  if (!best){
+    if (aggressive && !myOrder && overseasOpportunityAvailable(side)) return { action:'invade' };
+    return { action:'hold' };
+  }
 
   // A genuine "not worth it": the best sector still doesn't offer a real
   // edge, and we're not already committed there reaping an existing gain.
-  if (best.ratio < 1.05 && !myOrder) return { action:'hold' };
-  if (best.ratio < 0.85) return { action:'hold' }; // even reinforcing a losing push is the wrong call
+  // The AFK side presses at a lower bar than the enemy AI — it's meant
+  // to keep the war moving rather than only strike sure things.
+  const openThresh    = aggressive ? 0.90 : 1.05;
+  const sustainThresh = aggressive ? 0.62 : 0.85;
+  if (best.ratio < openThresh && !myOrder){
+    if (aggressive && !myOrder && overseasOpportunityAvailable(side)) return { action:'invade' };
+    return { action:'hold' };
+  }
+  if (best.ratio < sustainThresh) return { action:'hold' }; // even reinforcing a losing push is the wrong call
 
   return { action:'attack', front:best.g, ratio:best.ratio };
+}
+// Cheap check for whether a naval landing is actually worth attempting
+// right now (a real route exists and we have spare troops for it) —
+// used to decide whether "invade" is a genuine option or just noise.
+function overseasOpportunityAvailable(side){
+  const mine = S.countries[side==='player'?S.pCode:S.eCode];
+  const minFrac = side==='player' ? C.PLAYER_AI_MIN_TROOPS_FRAC : C.AI_ATTACK_MIN_TROOPS_FRAC;
+  if (!mine || mine.troops < mine.max*minFrac) return false;
+  if (side==='player'){
+    return !!closestLandingTarget('player','enemy');
+  }
+  return true; // enemy's overseas landing has its own internal route check
 }
 function pickFocusCellInGroup(group, side){
   const other = side==='player' ? 'enemy' : 'player';
@@ -2459,10 +2199,6 @@ function pickFocusCellInGroup(group, side){
 // order channels a human uses (S.attackOrder / S.enemyAttackOrder), so
 // combat resolution and defense are entirely unchanged downstream.
 function applyAiDecision(side, decision){
-  if (decision.action === 'retreat'){
-    if (side==='player') maybeStartPlayerRetreat(); else maybeStartAIRetreat();
-    return;
-  }
   if (decision.action === 'invade'){
     doAiOverseasLanding(side);
     return;
@@ -2537,7 +2273,7 @@ function doAiOverseasLanding(side){
 // (see runPlayerAutoDefense), but the player must still explicitly
 // order any offensive of their own — automatic defense never invades.
 function maybeStartAIAttack(){
-  if (S.over || S.enemyRetreatOrder) return;
+  if (S.over) return;
   const now = S.simMs;
   if (now < C.AI_ATTACK_GRACE_MS) return;
   if (now < (S.aiNextRollAt || 0)) return;
@@ -2547,44 +2283,13 @@ function maybeStartAIAttack(){
   applyAiDecision('enemy', decideFactionAction('enemy'));
 }
 
-// Mirror of maybeStartAIRetreat() above, using the same shared readiness
-// math (shouldRetreat) instead of a flat ratio+dice roll.
-function maybeStartPlayerRetreat(){
-  if (!S.autoMode || S.over || S.retreatOrder) return;
-  const pc = S.countries[S.pCode];
-  const ec = S.countries[S.eCode];
-  if (!pc || !ec) return;
-  if (!shouldRetreat('player')) return;
-
-  const pFronts = frontierCellsOf('player');
-  if (!pFronts.length) return;
-  const pCells = S.cells.filter(c => c.owner === 'player');
-  if (!pCells.length) return;
-
-  let fLat = 0, fLng = 0;
-  for (const c of pFronts){ fLat += c.c[0]; fLng += c.c[1]; }
-  fLat /= pFronts.length; fLng /= pFronts.length;
-  let cLat = 0, cLng = 0;
-  for (const c of pCells){ cLat += c.c[0]; cLng += c.c[1]; }
-  cLat /= pCells.length; cLng /= pCells.length;
-
-  const retLat = fLat + (cLat - fLat) * 0.35;
-  const retLng = fLng + (cLng - fLng) * 0.35;
-
-  const nearest = nearestAnyCell([retLat, retLng]);
-  if (!nearest || nearest.owner !== 'player') return;
-
-  if (S.attackOrder) clearAttackOrder(true);
-  startRetreat(retLat, retLng);
-}
-
 // ── AFK MODE: PLAYER-SIDE AI ATTACK ─────────────────────────────
 // The player's own turn of the exact same shared brain the enemy uses
 // (decideFactionAction/applyAiDecision above) — evaluated far more
 // often than the enemy's cadence, since AFK mode is meant to actually
 // run the whole war rather than occasionally spectate it.
 function maybeStartPlayerAI(){
-  if (!S.autoMode || S.over || S.retreatOrder) return;
+  if (!S.autoMode || S.over) return;
   const now = S.simMs;
   if (now < (S.playerAiNextRollAt || 0)) return;
   S.playerAiNextRollAt = now + C.PLAYER_AI_CHECK_MS;
@@ -2627,14 +2332,6 @@ function combatTick(){
   if (S.enemyAttackOrder && (S.enemyAttackOrder.commit <= 0 || S.simMs > S.enemyAttackOrder.until)){
     clearEnemyAttackOrder(true);
   }
-
-  // ── FIX 4: run retreat ticks (both sides) BEFORE normal combat ──
-  retreatTick();
-  enemyRetreatTick();
-  // The enemy AI may occasionally decide to retreat when badly outnumbered.
-  maybeStartAIRetreat();
-  // In AFK mode, the player's own side may also fall back when outnumbered.
-  maybeStartPlayerRetreat();
 
   // The enemy AI gets a chance to start a fresh offensive on its own,
   // completely independent of anything the player is doing.
@@ -2712,6 +2409,25 @@ function combatBudgetScale(weight){
   return clamp(weight, C.COMBAT_BUDGET_FLOOR, 1);
 }
 
+// ── FIX 5: relative-strength casualty scaling ──────────────────────
+// Previously each side's per-flip loss depended only on ITS OWN max
+// army size, completely independent of who it was actually fighting.
+// That meant a 10M-troop army attacking a 100K-troop army lost MORE
+// absolute troops per flip than the tiny defender did — the exact
+// opposite of what should happen. Losses now also scale with the
+// actual strength ratio of the engagement: the stronger side (whichever
+// one it is, attacker or defender) inflicts more and suffers less,
+// the weaker side inflicts less and suffers more — clamped so a small
+// nation can still make an attack costly and never becomes literally
+// unable to hurt back.
+function casualtyMults(effAttacker, effDefender){
+  const strengthRatio = clamp(effAttacker / Math.max(1, effDefender), 0.05, 20);
+  return {
+    atk: clamp(1 / strengthRatio, 0.2, 3),   // dominant attacker loses less per flip
+    def: clamp(strengthRatio, 0.2, 3),        // dominant attacker inflicts more per flip
+  };
+}
+
 // ── PLAYER PUSH ───────────────────────────────────────────────────
 // Player attack order: convert frontier cells nearest the focus into
 // pressure, spend commit pool to flip enemy cells. The closer a
@@ -2743,6 +2459,7 @@ function runPlayerPush({ attackerCountry, defenderCountry, frontiers, changed })
   const ratio = effectiveAttacker /
                 (effectiveAttacker + effectiveDefender + 1);
   const ratioWeight = combatRatioWeight(ratio);
+  const cm = casualtyMults(effectiveAttacker, effectiveDefender);
 
   // ── FIX 4: Make the slider genuinely control attack power.
   // intensityFrac is 0.01–0.99 (slider / 100).  We map it to a scale
@@ -2805,8 +2522,8 @@ function runPlayerPush({ attackerCountry, defenderCountry, frontiers, changed })
     // regardless of whether it's a 500K or 20M-troop matchup.
     const troopsPerFlip = Math.max(50, Math.floor(attackerCountry.max * C.TROOPS_PER_FLIP_FRAC));
     const atkSpend = troopsPerFlip;
-    const atkLoss  = attackerCountry.max * C.ATTACKER_LOSS_FRAC * (0.6 + Math.random()*0.8) * C.ATK_CAS_MULT;
-    const defLoss  = defenderCountry.max * C.DEFENDER_LOSS_FRAC * (0.6 + Math.random()*0.8) * C.DEF_CAS_MULT;
+    const atkLoss  = attackerCountry.max * C.ATTACKER_LOSS_FRAC * (0.6 + Math.random()*0.8) * C.ATK_CAS_MULT * cm.atk;
+    const defLoss  = defenderCountry.max * C.DEFENDER_LOSS_FRAC * (0.6 + Math.random()*0.8) * C.DEF_CAS_MULT * cm.def;
 
     order.commit = Math.max(0, order.commit - atkSpend);
     const atkActual=applyFactionLoss(attackerCountry, atkLoss, cand.from.flagCountry);
@@ -2837,8 +2554,7 @@ function runEnemyCounter({ attackerCountry, defenderCountry, frontiers, changed 
   // work — a badly outnumbered defender should barely be able to
   // hold the line, not casually claw back everything you take.
   const ratioWeight = combatRatioWeight(ratio) * 0.8;
-
-  // The contested frontier is biased around the player's attack focus.
+  const cm = casualtyMults(effectiveAttacker, effectiveDefender);
   const focus = S.attackOrder ? [S.attackOrder.lat, S.attackOrder.lng] : null;
 
   const muster = S.moveOrder ? [S.moveOrder.lat, S.moveOrder.lng] : null;
@@ -2887,8 +2603,8 @@ function runEnemyCounter({ attackerCountry, defenderCountry, frontiers, changed 
     const defenderFormation=cell.flagCountry;
     setCellOwner(cell, 'enemy', cand.from);
 
-    const atkLoss = attackerCountry.max * C.COUNTER_LOSS_FRAC   * (0.5 + Math.random()*0.9) * C.ATK_CAS_MULT;
-    const defLoss = defenderCountry.max * C.ATTACKER_LOSS_FRAC  * (0.5 + Math.random()*0.9) * C.DEF_CAS_MULT;
+    const atkLoss = attackerCountry.max * C.COUNTER_LOSS_FRAC   * (0.5 + Math.random()*0.9) * C.ATK_CAS_MULT * cm.atk;
+    const defLoss = defenderCountry.max * C.ATTACKER_LOSS_FRAC  * (0.5 + Math.random()*0.9) * C.DEF_CAS_MULT * cm.def;
 
     const atkActual=applyFactionLoss(attackerCountry, atkLoss, cand.from.flagCountry);
     const defActual=applyFactionLoss(defenderCountry, defLoss, defenderFormation);
@@ -2927,6 +2643,7 @@ function runEnemyPush({ attackerCountry, defenderCountry, frontiers, changed }){
   const ratio = effectiveEnemyAttacker /
                 (effectiveEnemyAttacker + effectivePlayerDefender + 1);
   const ratioWeight = combatRatioWeight(ratio);
+  const cm = casualtyMults(effectiveEnemyAttacker, effectivePlayerDefender);
 
   const candidates = [];
   for (const fc of frontiers){
@@ -2959,8 +2676,8 @@ function runEnemyPush({ attackerCountry, defenderCountry, frontiers, changed }){
     const defenderFormation=cell.flagCountry;
     setCellOwner(cell, 'enemy', cand.from);
 
-    const atkLoss = attackerCountry.max * C.ATTACKER_LOSS_FRAC * (0.6 + Math.random()*0.8) * C.ATK_CAS_MULT;
-    const defLoss = defenderCountry.max * C.DEFENDER_LOSS_FRAC * (0.6 + Math.random()*0.8) * C.DEF_CAS_MULT;
+    const atkLoss = attackerCountry.max * C.ATTACKER_LOSS_FRAC * (0.6 + Math.random()*0.8) * C.ATK_CAS_MULT * cm.atk;
+    const defLoss = defenderCountry.max * C.DEFENDER_LOSS_FRAC * (0.6 + Math.random()*0.8) * C.DEF_CAS_MULT * cm.def;
 
     order.commit = Math.max(0, order.commit - troopsPerFlipE);
     const atkActual=applyFactionLoss(attackerCountry, atkLoss, cand.from.flagCountry);
@@ -2987,6 +2704,7 @@ function runPlayerAutoDefense({ ec, pc, frontiers, changed }){
   // Automatic defense is slightly less efficient than a deliberate
   // order, but the troop ratio itself now does almost all of the work.
   const ratioWeight = combatRatioWeight(ratio) * 0.8;
+  const cm = casualtyMults(playerStrength, enemyStrength);
 
   const focus = S.enemyAttackOrder ? [S.enemyAttackOrder.lat, S.enemyAttackOrder.lng] : null;
 
@@ -3022,8 +2740,8 @@ function runPlayerAutoDefense({ ec, pc, frontiers, changed }){
     const defenderFormation=cell.flagCountry;
     setCellOwner(cell, 'player', cand.from);
 
-    const atkLoss = pc.max * C.COUNTER_LOSS_FRAC  * (0.5 + Math.random()*0.9) * C.ATK_CAS_MULT;
-    const defLoss = ec.max * C.ATTACKER_LOSS_FRAC * (0.5 + Math.random()*0.9) * C.DEF_CAS_MULT;
+    const atkLoss = pc.max * C.COUNTER_LOSS_FRAC  * (0.5 + Math.random()*0.9) * C.ATK_CAS_MULT * cm.atk;
+    const defLoss = ec.max * C.ATTACKER_LOSS_FRAC * (0.5 + Math.random()*0.9) * C.DEF_CAS_MULT * cm.def;
 
     const atkActual=applyFactionLoss(pc, atkLoss, cand.from.flagCountry);
     const defActual=applyFactionLoss(ec, defLoss, defenderFormation);
@@ -3783,9 +3501,7 @@ function rewindToWarStart(){
   // it produced should linger.
   clearAttackOrder(false);
   clearMoveOrder();
-  clearRetreatOrder();
   clearEnemyAttackOrder(false);
-  clearEnemyRetreatOrder();
 
   recountCells();
   refreshCells(S.cells);
@@ -3819,7 +3535,7 @@ function updatePeaceButtons(){
 
 function endGame(won, reason){
   S.over = true;
-  clearSavedWar(); // this war is finished — nothing left to "continue"
+  clearSavedWarFor(S.selections?.player); // this war is finished — nothing left to "continue"
   const annexed = won === true ? annexConqueredTerritory() : [];
   if (S.audio) S.audio.pause();
   const vidEl = $('vidplayer');
@@ -3854,8 +3570,8 @@ function endGame(won, reason){
   if(vwEl) { vwEl.style.transition='opacity .5s';  vwEl.style.opacity='0'; }
 
   // Clear all live order markers
-  clearAttackOrder(false); clearMoveOrder(); clearRetreatOrder();
-  clearEnemyAttackOrder(false); clearEnemyRetreatOrder();
+  clearAttackOrder(false); clearMoveOrder();
+  clearEnemyAttackOrder(false);
 
   // Fade flags, remove troop labels and front line
   for (const side of ['player','enemy'])
@@ -4267,13 +3983,24 @@ function toggleAutoMode(){
   }
 }
 
-// Cancels any in-flight order (refunding it), snapshots the war to
-// localStorage, and returns to the menu, where CONTINUE WAR picks up
-// exactly this state.
-function saveAndExit(){
-  saveWarInProgress();
-  location.reload();
+// The game now saves automatically instead of requiring a manual
+// "Save & Exit" button — the player should be able to just close the
+// tab/app and pick up later via CONTINUE on the menu. We hook every
+// realistic "leaving" signal: an actual unload, and the page being
+// hidden (tab switch, app backgrounded/killed on mobile — the most
+// reliable signal on phones, where beforeunload/pagehide alone can be
+// unreliable). We deliberately do NOT save on a timer while the war is
+// visibly in progress — saving cancels/refunds any in-flight attack
+// order (see saveWarInProgress), so a periodic autosave would keep
+// interrupting an active offensive.
+function autosaveIfActive(){
+  if (S.pCode && S.eCode && !S.over) saveWarInProgress();
 }
+window.addEventListener('pagehide', autosaveIfActive);
+window.addEventListener('beforeunload', autosaveIfActive);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') autosaveIfActive();
+});
 
 // ── BACKGROUND VIDEO ────────────────────────────────────────────────
 // Same loading/sequencing pattern as the audio track above: load one
