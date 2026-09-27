@@ -34,7 +34,8 @@ Troop sizes are seeded from real-world population figures, so picking a superpow
 * **Player-Controlled Diplomacy:** Pick zero, one, or several allies — then choose one or more enemy countries. Alliances do not need to make geopolitical sense. That's between you and history. 😂
 * **Coalition Territory:** Allied and enemy countries merge their territory, manpower and fronts into real fighting coalitions instead of acting as a cosmetic troop bonus.
 * **18 Historical Empire Starts:** Play as the Roman, Byzantine, Ottoman, British, Spanish, Portuguese, Persian, Russian, Soviet, Austro-Hungarian, French Colonial, German, Qing, Mughal, Japanese, Macedonian, Umayyad, or Abbasid Empire.
-* **Empires Are One Country:** No exceptions. However many modern nations sit inside its historical borders, an empire fields one flag, one force total, one loss total, and one seat at the diplomacy table — never a pile of separate modern countries wearing an empire's name. Add a real ally on top (say, Roman Empire + Germany) and *that* still shows up as its own country, exactly like it should.
+* **Empires Are One Country:** No exceptions. However many modern nations sit inside its historical borders, an empire fields one flag, one force total, one loss total, and one seat at the diplomacy table — never a pile of separate modern countries wearing an empire's name. Add a real ally on top (say, Roman Empire + Germany) and *that* still shows up as its own country, exactly like it should. Empires are also fully selectable as allies or enemies, not just as your own starting nation.
+* **Real Empire Flags:** Since historical empires don't exist on any live flag CDN, each one gets its own hand-drawn vector flag baked right into the game — Roman purple-and-gold SPQR, a Byzantine gold field with a black double eagle, the Ottoman crescent, a British red ensign, the Spanish Cross of Burgundy, and so on for all 18. No empire ever borrows a modern member country's flag.
 * **High-Detail Cell Grid Engine:** Every selected coalition territory is carved into invisible square cells. Each cell tracks its owner, home nation, current formation, neighbours, and whether it sits on an active front line.
 * **Anti-Meridian-Safe Geography:** Date-line-spanning geometry is converted into continuous simulation rings and split safely for rendering. Russia and other seam-crossing countries do not create phantom territory, fronts, or world-spanning lines.
 * **Live Front Line Rendering:** Border cells are outlined in a warm yellow highlight — interior territory has no borders, so the coloured mass looks smooth and organic.
@@ -50,15 +51,17 @@ Troop sizes are seeded from real-world population figures, so picking a superpow
 
 ### Enemy AI
 
-* **Strategic AI Offensives:** The enemy weighs readiness, territory held, force density across the front, your active offensive and exposed sectors before committing to an attack.
+* **Decision-Based Brain, Not a Timer:** The AI doesn't attack on a clock or a dice roll. It continuously evaluates every connected front sector it holds — local strength there versus what's actually facing it, exposed enemy cells, an ongoing push worth reinforcing — and picks the best move each cycle. Doing nothing is a normal, frequent outcome when no sector is actually worth committing troops to.
+* **Genuine Attack / Hold / Retreat Decisions:** A strong local opportunity gets pressed. A merely-okay one gets held rather than wasted. A sector getting overrun with no reserves left triggers a fallback instead of a doomed stand.
+* **Capable of Winning:** The same brain drives the enemy at full strength — it isn't scripted to lose. It can launch real offensives, take significant territory, grind down your army, and win the war outright.
 * **Auto-Defend on AI Attack:** While the enemy is pressing, your troops near the front automatically defend and reclaim lost ground — but will never automatically invade. Only your orders can push into enemy territory.
-* **AI Grace Period:** A brief grace period at game start before the AI is allowed to roll for its first attack, giving you time to orient.
-* **Retreat System:** Both the player and the AI can fall back to consolidate their front line.
+* **AI Grace Period:** A brief grace period at game start before the AI is allowed to act, giving you time to orient.
+* **Retreat System:** Both the player and the AI can fall back to consolidate their front line, based on the same local-strength read the attack decision uses.
 
 ### 🤖 AFK Mode
 
-* **Automode:** Press AFK Mode and a second AI — running the exact same strategic playbook as the enemy — takes over your side. It reads readiness, territory held, and front pressure just like the enemy AI does, then attacks, defends, and retreats through the same order system a human player uses. Press it, sit back, and watch two AIs fight the whole war like one of those country-vs-country simulation videos. 🍿
-* **Non-Destructive:** AFK Mode plugs into the normal attack/retreat orders instead of a separate combat path, so nothing about how battles resolve changes — it just decides *when* and *where* to click for you.
+* **The Same Brain, Driving Your Side:** Press AFK Mode and your side is handed to the exact decision-making core described above — not a separate, dumber system. It reads every front sector, attacks where there's a real opening, reinforces or redirects an ongoing push, holds when nothing's worth it, and falls back when a sector is genuinely lost — continuously, not on a fixed interval.
+* **Non-Destructive:** AFK Mode plugs into the normal attack/retreat orders instead of a separate combat path, so nothing about how battles resolve changes — it just decides *when* and *where* to act for you.
 
 ### Troop & Simulation System
 
@@ -86,6 +89,12 @@ Troop sizes are seeded from real-world population figures, so picking a superpow
 * **Victory / Defeat Screen:** When one side's territory is fully overrun, an end screen appears with final casualty counts, the reason for the outcome, and the total number of war days elapsed.
 * **Surrender Option:** End the war on your terms at any time.
 
+### 💾 Campaign & Persistence
+
+* **Save & Continue War:** Hit SAVE & EXIT mid-war and the entire state — territory, forces, casualties, allies, enemies, war date — is written to your browser's local storage. A CONTINUE WAR button appears back on the menu, and picks the war up exactly where you left it, not from scratch.
+* **Territory Persists Across Wars:** Win a war and any nation you substantially conquered is permanently annexed into your side. Pick that same nation (or empire) again later and its playable territory now includes everything you took last time.
+* **Wars Chain Into a Campaign:** Small country → regional power → sprawling empire, purely by winning wars back to back. Your borders, your flag's reach, and your starting army size all reflect the accumulated territory — no separate campaign mode or mechanics required, just the same war loop compounding on itself. A "reset campaign" link on the menu clears accumulated territory if you want a clean slate.
+
 ---
 
 ## 🛠 Tools & Technologies Used
@@ -96,7 +105,7 @@ Troop sizes are seeded from real-world population figures, so picking a superpow
 * **Leaflet.js:** Interactive map rendering, marker management, polygon layers
 * **TopoJSON / world-atlas:** High-resolution country geometry (110m scale)
 * **world-countries:** Country metadata — names, ISO codes, borders, population, coordinates
-* **flagcdn.com:** Live country flag images via ISO 2-letter codes
+* **flagcdn.com:** Live country flag images via ISO 2-letter codes (real countries only — historical empires use hand-drawn inline SVG flags instead)
 * **ArcGIS World Imagery:** Satellite map tile layer
 * **Vercel:** Deployment
 * **AI Assistance:** Planning, debugging, and optimization
@@ -152,6 +161,8 @@ irontide/
 7. **Watch the front line.** The yellow border shows where fighting is happening.
 8. **Overrun the enemy coalition** before it overruns yours. First side to lose all cells loses the war.
 9. **Or just hit AFK Mode** and let the AI run your side while you watch the whole thing play out. 🍿
+10. **Mid-war, hit SAVE & EXIT** if you need to stop — CONTINUE WAR on the menu picks it back up exactly as you left it.
+11. **Win, and keep the land.** Conquered territory carries into your next war with that same nation — build an empire one war at a time.
 
 ---
 
@@ -159,7 +170,7 @@ irontide/
 
 This is an actively maintained experimental project.
 
-Updates are focused on expanding the AI behaviour, refining multi-front coalition conflict, improving troop mechanics, and polishing large-scale territorial rendering. Latest pass: a much larger empire roster, a proper empire-as-one-country fix across flags/forces/losses/diplomacy, and AFK Mode.
+Updates are focused on expanding the AI behaviour, refining multi-front coalition conflict, improving troop mechanics, and polishing large-scale territorial rendering. Latest pass: hand-drawn flags for every historical empire (no more borrowing a modern member's flag), a shared decision-based AI brain driving both the enemy and AFK Mode, and campaign persistence — save/continue a war in progress, and conquered territory that carries into your next war.
 
 ---
 

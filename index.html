@@ -269,10 +269,15 @@ body{background:#060606;color:#ddd;font-family:'Courier New',monospace}
     <div class="gsub">Choose your nation · Deploy your forces · Conquer</div>
     <div id="lmsg">▸ LOADING WORLD DATA...</div>
     <div id="lbwrap"><div id="lbar"></div></div>
+    <div id="continueWrap" style="display:none;margin-bottom:14px;text-align:center">
+      <button class="cbtn on" style="padding:10px 22px;font-size:14px" onclick="continueWar()">▶ CONTINUE WAR</button>
+      <div id="continueMeta" style="font-size:11px;color:#888;margin-top:6px"></div>
+    </div>
     <div id="selwrap">
       <div class="sgrp">
         <span class="slbl">YOUR NATION</span>
         <select id="psel"><option value="">— SELECT —</option></select>
+        <div id="campaignNote" style="display:none;font-size:11px;color:#8fd694;margin-top:6px"></div>
       </div>
       <div class="diplo" id="diplo">
         <div class="diploTop"><span class="diploTitle">BUILD YOUR <b>WAR PLAN</b></span><input id="dipsearch" placeholder="Search countries…" autocomplete="off"></div>
@@ -326,6 +331,8 @@ body{background:#060606;color:#ddd;font-family:'Courier New',monospace}
     <button class="cbtn" id="mbtn" onclick="toggleMute()">🔊 MUTE</button>
     <div class="csep"></div>
     <button class="cbtn" id="afkbtn" onclick="toggleAutoMode()" title="Let the AI command your side — sit back and watch">🤖 AFK MODE</button>
+    <div class="csep"></div>
+    <button class="cbtn" onclick="saveAndExit()" title="Save this war and return to the menu — CONTINUE WAR resumes it exactly">💾 SAVE &amp; EXIT</button>
     <div class="csep"></div>
     <span class="spdlbl">SPEED</span>
     <button class="cbtn on" id="s1" onclick="setSpeed(1)">1×</button>
@@ -532,8 +539,9 @@ const C = {
   FLAG_FADE_MS:              380, // fade in/out duration for flag count changes
 
   // ─ autonomous enemy AI offensives ─
-  AI_ATTACK_CHECK_MS:        2000,  // how often the AI re-rolls the dice
-  AI_ATTACK_CHANCE:          0.12,  // flat chance per roll — rolls happen more often at higher speed (sim-time clock), not via a bigger per-roll chance
+  AI_ATTACK_CHECK_MS:        2000,  // legacy — superseded by AI_EVAL_MS below
+  AI_EVAL_MS:                1200,  // how often the enemy AI brain re-evaluates the whole situation
+  AI_ATTACK_CHANCE:          0.12,  // unused by the decision-based brain; kept for reference
   AI_ATTACK_MIN_COMMIT_PCT:  0.12,
   AI_ATTACK_MAX_COMMIT_PCT:  0.30,
   AI_ATTACK_MIN_DURATION_MS: 14000,
@@ -623,26 +631,67 @@ const POP_FALLBACK = {
 // not cosmetic renames: their modern member states are fused into one country
 // before the grid is built.
 const EMPIRES = {
-  EMP_ROM: { name:'Roman Empire', iso2:'it', members:['ITA','FRA','ESP','PRT','GRC','TUR','EGY','TUN','DZA','MAR','LBY','HRV','SVN','ALB','MKD','SRB','BGR','ROU','HUN','AUT','CHE','BEL','NLD','SYR','LBN','ISR','JOR'] },
-  EMP_BYZ: { name:'Byzantine Empire', iso2:'gr', members:['GRC','TUR','BGR','SRB','MKD','ALB','ITA','EGY','LBY','TUN','DZA','SYR','LBN','ISR','JOR'] },
-  EMP_OTT: { name:'Ottoman Empire', iso2:'tr', members:['TUR','GRC','BGR','SRB','BIH','ALB','MKD','ROU','HUN','SYR','LBN','ISR','JOR','IRQ','SAU','EGY','LBY','TUN','DZA'] },
-  EMP_BRI: { name:'British Empire', iso2:'gb', members:['GBR','IRL','CAN','AUS','NZL','IND','PAK','BGD','ZAF','EGY','KEN','NGA','GHA','MYS'] },
-  EMP_SPA: { name:'Spanish Empire', iso2:'es', members:['ESP','MEX','ARG','COL','PER','VEN','CHL','ECU','BOL','PRY','URY','CUB','DOM','PHL','GTM','HND','NIC','CRI','PAN','SLV'] },
-  EMP_POR: { name:'Portuguese Empire', iso2:'pt', members:['PRT','BRA','AGO','MOZ','GNB','CPV','STP','TLS','MAC'] },
-  EMP_PER: { name:'Persian Empire', iso2:'ir', members:['IRN','IRQ','AFG','ARM','AZE','GEO','TUR','SYR','LBN','ISR','JOR','EGY','PAK','TJK','TKM','UZB','KWT','BHR','QAT','ARE','OMN','SAU'] },
-  EMP_RUS: { name:'Russian Empire', iso2:'ru', members:['RUS','UKR','BLR','POL','FIN','EST','LVA','LTU','GEO','ARM','AZE','KAZ','UZB','TKM','KGZ','TJK','MDA'] },
-  EMP_SOV: { name:'Soviet Union', iso2:'ru', members:['RUS','UKR','BLR','MDA','EST','LVA','LTU','GEO','ARM','AZE','KAZ','UZB','TKM','KGZ','TJK'] },
-  EMP_AUH: { name:'Austro-Hungarian Empire', iso2:'at', members:['AUT','HUN','CZE','SVK','SVN','HRV','BIH','SRB','ROU','POL','UKR'] },
-  EMP_FRC: { name:'French Colonial Empire', iso2:'fr', members:['FRA','DZA','MAR','TUN','SEN','MLI','NER','TCD','CIV','BFA','BEN','TGO','GIN','MRT','CMR','GAB','COG','CAF','MDG','VNM','LAO','KHM','HTI','LBN','SYR'] },
-  EMP_GER: { name:'German Empire', iso2:'de', members:['DEU','POL','NAM','TZA','CMR','TGO'] },
-  EMP_QIN: { name:'Qing Empire', iso2:'cn', members:['CHN','MNG','TWN'] },
-  EMP_MUG: { name:'Mughal Empire', iso2:'in', members:['IND','PAK','BGD'] },
-  EMP_JPN: { name:'Japanese Empire', iso2:'jp', members:['JPN','KOR','PRK','TWN'] },
-  EMP_MAC: { name:'Macedonian Empire', iso2:'gr', members:['GRC','TUR','EGY','SYR','LBN','ISR','JOR','IRQ','IRN','AFG','PAK','TKM','UZB','TJK','KGZ','ARM','AZE','GEO'] },
-  EMP_UMY: { name:'Umayyad Caliphate', iso2:'sy', members:['SYR','IRQ','SAU','JOR','LBN','ISR','PSE','EGY','LBY','TUN','DZA','MAR','ESP','PRT','IRN','TUR','ARM','AZE','TKM','UZB','PAK'] },
-  EMP_ABB: { name:'Abbasid Caliphate', iso2:'iq', members:['IRQ','SYR','SAU','JOR','LBN','ISR','PSE','IRN','EGY','LBY','TUN','DZA','MAR','TKM','UZB','TJK','AFG','PAK','YEM','OMN','ARE','QAT','BHR','KWT'] },
-  EMP_MNG: { name:'Mongol Empire', iso2:'mn', members:['MNG','CHN','KAZ','RUS','IRN','IRQ','TUR','AFG','PAK','KGZ','UZB','TKM','TJK','AZE','ARM','GEO'] },
+  EMP_ROM: { name:'Roman Empire', members:['ITA','FRA','ESP','PRT','GRC','TUR','EGY','TUN','DZA','MAR','LBY','HRV','SVN','ALB','MKD','SRB','BGR','ROU','HUN','AUT','CHE','BEL','NLD','SYR','LBN','ISR','JOR'] },
+  EMP_BYZ: { name:'Byzantine Empire', members:['GRC','TUR','BGR','SRB','MKD','ALB','ITA','EGY','LBY','TUN','DZA','SYR','LBN','ISR','JOR'] },
+  EMP_OTT: { name:'Ottoman Empire', members:['TUR','GRC','BGR','SRB','BIH','ALB','MKD','ROU','HUN','SYR','LBN','ISR','JOR','IRQ','SAU','EGY','LBY','TUN','DZA'] },
+  EMP_BRI: { name:'British Empire', members:['GBR','IRL','CAN','AUS','NZL','IND','PAK','BGD','ZAF','EGY','KEN','NGA','GHA','MYS'] },
+  EMP_SPA: { name:'Spanish Empire', members:['ESP','MEX','ARG','COL','PER','VEN','CHL','ECU','BOL','PRY','URY','CUB','DOM','PHL','GTM','HND','NIC','CRI','PAN','SLV'] },
+  EMP_POR: { name:'Portuguese Empire', members:['PRT','BRA','AGO','MOZ','GNB','CPV','STP','TLS','MAC'] },
+  EMP_PER: { name:'Persian Empire', members:['IRN','IRQ','AFG','ARM','AZE','GEO','TUR','SYR','LBN','ISR','JOR','EGY','PAK','TJK','TKM','UZB','KWT','BHR','QAT','ARE','OMN','SAU'] },
+  EMP_RUS: { name:'Russian Empire', members:['RUS','UKR','BLR','POL','FIN','EST','LVA','LTU','GEO','ARM','AZE','KAZ','UZB','TKM','KGZ','TJK','MDA'] },
+  EMP_SOV: { name:'Soviet Union', members:['RUS','UKR','BLR','MDA','EST','LVA','LTU','GEO','ARM','AZE','KAZ','UZB','TKM','KGZ','TJK'] },
+  EMP_AUH: { name:'Austro-Hungarian Empire', members:['AUT','HUN','CZE','SVK','SVN','HRV','BIH','SRB','ROU','POL','UKR'] },
+  EMP_FRC: { name:'French Colonial Empire', members:['FRA','DZA','MAR','TUN','SEN','MLI','NER','TCD','CIV','BFA','BEN','TGO','GIN','MRT','CMR','GAB','COG','CAF','MDG','VNM','LAO','KHM','HTI','LBN','SYR'] },
+  EMP_GER: { name:'German Empire', members:['DEU','POL','NAM','TZA','CMR','TGO'] },
+  EMP_QIN: { name:'Qing Empire', members:['CHN','MNG','TWN'] },
+  EMP_MUG: { name:'Mughal Empire', members:['IND','PAK','BGD'] },
+  EMP_JPN: { name:'Japanese Empire', members:['JPN','KOR','PRK','TWN'] },
+  EMP_MAC: { name:'Macedonian Empire', members:['GRC','TUR','EGY','SYR','LBN','ISR','JOR','IRQ','IRN','AFG','PAK','TKM','UZB','TJK','KGZ','ARM','AZE','GEO'] },
+  EMP_UMY: { name:'Umayyad Caliphate', members:['SYR','IRQ','SAU','JOR','LBN','ISR','PSE','EGY','LBY','TUN','DZA','MAR','ESP','PRT','IRN','TUR','ARM','AZE','TKM','UZB','PAK'] },
+  EMP_ABB: { name:'Abbasid Caliphate', members:['IRQ','SYR','SAU','JOR','LBN','ISR','PSE','IRN','EGY','LBY','TUN','DZA','MAR','TKM','UZB','TJK','AFG','PAK','YEM','OMN','ARE','QAT','BHR','KWT'] },
+  EMP_MNG: { name:'Mongol Empire', members:['MNG','CHN','KAZ','RUS','IRN','IRQ','TUR','AFG','PAK','KGZ','UZB','TKM','TJK','AZE','ARM','GEO'] },
 };
+
+// Empires have no entry on flagcdn (it only serves real, currently-existing
+// ISO country codes) — borrowing a modern member's flag was exactly the bug
+// reported twice. These are drawn as small inline vector flags instead, so
+// every empire has its own real, historically-inspired identity that never
+// depends on an external image existing: Roman purple/gold SPQR, a
+// Byzantine gold field with a black double eagle, the Ottoman crescent,
+// a British red ensign, the Spanish Cross of Burgundy, Portugal's old
+// blue/white royal colours, Persia's lion-and-sun tricolor, the black-
+// yellow-white Imperial Russian flag (distinct from the modern tricolor),
+// the Soviet star, the black-yellow Habsburg field, a French colonial
+// naval jack, the black-white-red German Imperial tricolor, the Qing
+// yellow dragon flag, a Mughal green sun standard, the Japanese Empire's
+// rising-sun ensign (distinct from modern Japan's plain disc), the
+// Macedonian Vergina Sun, the plain white Umayyad banner, the plain
+// black Abbasid banner, and a Mongol "eternal blue sky" standard.
+const EMPIRE_FLAG_SVG = {
+  EMP_ROM: `<rect width="60" height="40" fill="#6e1530"/><rect x="3" y="3" width="54" height="34" fill="none" stroke="#e8c766" stroke-width="1"/><text x="30" y="25" font-family="Georgia,'Times New Roman',serif" font-size="15" font-weight="bold" fill="#e8c766" text-anchor="middle">SPQR</text>`,
+  EMP_BYZ: `<rect width="60" height="40" fill="#7a0c0c"/><g fill="#f0c419"><polygon points="30,11 14,31 46,31"/><circle cx="21" cy="11" r="4.5"/><circle cx="39" cy="11" r="4.5"/><circle cx="21" cy="8" r="1.6"/><circle cx="39" cy="8" r="1.6"/></g>`,
+  EMP_OTT: `<rect width="60" height="40" fill="#c8102e"/><circle cx="24" cy="20" r="9" fill="#fff"/><circle cx="27.5" cy="20" r="7.4" fill="#c8102e"/><polygon points="37,20 41,17.9 39.6,22.2 43.3,24.7 38.7,24.6 37.2,29 35.8,24.6 31.2,24.7 34.9,22.2 33.5,17.9" fill="#fff"/>`,
+  EMP_BRI: `<rect width="60" height="40" fill="#a5122a"/><rect x="2" y="2" width="27" height="18" fill="#00247d"/><path d="M2,2 L29,20 M29,2 L2,20" stroke="#fff" stroke-width="2.4"/><path d="M15.5,2 V20 M2,11 H29" stroke="#fff" stroke-width="3.4"/><path d="M15.5,2 V20 M2,11 H29" stroke="#c8102e" stroke-width="1.3"/>`,
+  EMP_SPA: `<rect width="60" height="40" fill="#f2ede1"/><g stroke="#c8102e" stroke-width="6" stroke-linecap="round"><line x1="5" y1="5" x2="55" y2="35"/><line x1="55" y1="5" x2="5" y2="35"/></g>`,
+  EMP_POR: `<rect width="30" height="40" fill="#012169"/><rect x="30" width="30" height="40" fill="#fff"/><circle cx="30" cy="20" r="7.5" fill="#ffce00" stroke="#012169" stroke-width="1.4"/>`,
+  EMP_PER: `<rect width="60" height="13.3" fill="#22964e"/><rect y="13.3" width="60" height="13.4" fill="#fdfdfd"/><rect y="26.7" width="60" height="13.3" fill="#da1e28"/><circle cx="30" cy="20" r="6" fill="#f4b400" stroke="#a86f00" stroke-width="0.6"/>`,
+  EMP_RUS: `<rect width="60" height="13.3" fill="#111"/><rect y="13.3" width="60" height="13.4" fill="#ffd21f"/><rect y="26.7" width="60" height="13.3" fill="#fff"/>`,
+  EMP_SOV: `<rect width="60" height="40" fill="#cc0000"/><polygon points="10,4 12.4,10.4 19.2,10.6 13.8,14.8 15.8,21.4 10,17.6 4.2,21.4 6.2,14.8 0.8,10.6 7.6,10.4" fill="#ffd700"/>`,
+  EMP_AUH: `<rect width="60" height="40" fill="#111"/><rect y="9" width="60" height="22" fill="#ffd700"/><g fill="#111"><circle cx="26" cy="20" r="4"/><circle cx="34" cy="20" r="4"/><polygon points="30,11 22,20 38,20"/></g>`,
+  EMP_FRC: `<rect width="60" height="40" fill="#f6f6f2" stroke="#ccc" stroke-width="0.6"/><rect x="3" y="3" width="7" height="16" fill="#0055a4"/><rect x="10" y="3" width="7" height="16" fill="#fff" stroke="#ddd" stroke-width="0.3"/><rect x="17" y="3" width="7" height="16" fill="#ef4135"/>`,
+  EMP_GER: `<rect width="60" height="13.3" fill="#111"/><rect y="13.3" width="60" height="13.4" fill="#fff"/><rect y="26.7" width="60" height="13.3" fill="#dd0000"/>`,
+  EMP_QIN: `<rect width="60" height="40" fill="#ffce00"/><path d="M8,27 Q18,10 28,20 T50,13" stroke="#1c39bb" stroke-width="3.4" fill="none" stroke-linecap="round"/><circle cx="49" cy="9" r="3" fill="#da291c"/>`,
+  EMP_MUG: `<rect width="60" height="40" fill="#0b6623"/><circle cx="30" cy="20" r="7.5" fill="#ffd700"/><g stroke="#ffd700" stroke-width="2"><line x1="30" y1="4" x2="30" y2="10"/><line x1="30" y1="30" x2="30" y2="36"/><line x1="8" y1="20" x2="14" y2="20"/><line x1="46" y1="20" x2="52" y2="20"/><line x1="14" y1="8" x2="18" y2="12"/><line x1="46" y1="8" x2="42" y2="12"/><line x1="14" y1="32" x2="18" y2="28"/><line x1="46" y1="32" x2="42" y2="28"/></g>`,
+  EMP_JPN: `<rect width="60" height="40" fill="#fff"/><g stroke="#bc002d" stroke-width="2.6"><line x1="30" y1="20" x2="30" y2="-2"/><line x1="30" y1="20" x2="30" y2="42"/><line x1="30" y1="20" x2="-2" y2="20"/><line x1="30" y1="20" x2="62" y2="20"/><line x1="30" y1="20" x2="8" y2="-2"/><line x1="30" y1="20" x2="52" y2="-2"/><line x1="30" y1="20" x2="8" y2="42"/><line x1="30" y1="20" x2="52" y2="42"/></g><circle cx="30" cy="20" r="8" fill="#bc002d"/>`,
+  EMP_MAC: `<rect width="60" height="40" fill="#6e0c0c"/><polygon points="30,5 33.5,17.5 45.5,14 36.5,22 44,32 30,25.5 16,32 23.5,22 14.5,14 26.5,17.5" fill="#ffd21f"/>`,
+  EMP_UMY: `<rect width="60" height="40" fill="#f7f6f0" stroke="#a9a397" stroke-width="1"/>`,
+  EMP_ABB: `<rect width="60" height="40" fill="#0c0c0c"/>`,
+  EMP_MNG: `<rect width="60" height="40" fill="#0b3d78"/><g stroke="#f2f2f2" stroke-width="2.2" fill="none" stroke-linecap="round"><line x1="30" y1="9" x2="30" y2="31"/><line x1="21" y1="16" x2="30" y2="9"/><line x1="39" y1="16" x2="30" y2="9"/><line x1="21" y1="31" x2="39" y2="31"/></g>`,
+};
+function empireFlagDataUri(code){
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 40">${EMPIRE_FLAG_SVG[code]||''}</svg>`;
+  return `data:image/svg+xml,${encodeURIComponent(svg)}`;
+}
 
 // An empire is ONE country — register it as a real, permanent, selectable
 // entity in S.countries (its own name, its own flag, its own merged
@@ -661,7 +710,7 @@ function registerEmpireEntities(){
     const feat = mergeFeatures(empMembers);
     prepareGridGeometry(feat);
     S.countries[code] = {
-      name: e.name, iso2: e.iso2, flagUrl: FLAG_URL(e.iso2),
+      name: e.name, flagUrl: empireFlagDataUri(code),
       pop, max: 0, troops: 0, ctrl: 'neutral',
       borders: [], ctr, feat, isEmpireEntity: true,
     };
@@ -673,6 +722,7 @@ const S = {
   countries: {},
   pCode: null, eCode: null,
   cas: { p: 0, e: 0 },
+  persistentTerritory: {}, // { realCountryCode: ownerSelectionCode } — campaign growth across separate wars
 
   // ─ cell-grid combat ─
   cells: [],
@@ -846,7 +896,146 @@ function prepareGridGeometry(feat){
 }
 
 // ── DATA LOADING ──────────────────────────────────────────────────
+// ── CAMPAIGN PERSISTENCE (territory carried between separate wars) ──
+// "War → victory → territory gained → new war using that expanded
+// territory" — implemented at the country level: when a real nation is
+// substantially conquered, it's recorded as annexed to the winner, and
+// selectionMembers() (used everywhere a selection's territory matters)
+// folds that annexed land in automatically from then on.
+const CAMPAIGN_KEY = 'irontide_campaign_v1';
+function loadCampaignTerritory(){
+  try { return JSON.parse(localStorage.getItem(CAMPAIGN_KEY) || '{}'); }
+  catch { return {}; }
+}
+function saveCampaignTerritory(){
+  try { localStorage.setItem(CAMPAIGN_KEY, JSON.stringify(S.persistentTerritory || {})); }
+  catch {}
+}
+function resetCampaignTerritory(){
+  S.persistentTerritory = {};
+  try { localStorage.removeItem(CAMPAIGN_KEY); } catch {}
+}
+// After a player victory, any real member of the losing coalition that
+// ended up majority-held becomes permanently annexed to whichever
+// selection the player used this war — so picking that same nation or
+// empire again later starts from the bigger map.
+function annexConqueredTerritory(){
+  const ec = S.countries[S.eCode];
+  const winner = S.selections?.player;
+  if (!ec || !winner) return [];
+  const conquered = [];
+  for (const m of ec.members){
+    const c = S.countries[m];
+    if (!c || !c.cellsOrigTotal) continue;
+    if ((c.cellsHeld / c.cellsOrigTotal) >= 0.5 && S.persistentTerritory[m] !== winner){
+      S.persistentTerritory[m] = winner;
+      conquered.push(m);
+    }
+  }
+  if (conquered.length) saveCampaignTerritory();
+  return conquered;
+}
+
+// ── SAVE / CONTINUE A WAR IN PROGRESS ────────────────────────────
+// A single-file, no-backend game means localStorage is the sensible
+// place for this. Rather than trying to faithfully re-serialize live
+// Leaflet markers, in-flight travel timers, etc., a save cancels (and
+// refunds) any order in flight first, then captures exactly what's
+// needed to rebuild an identical grid deterministically (the original
+// selections — the grid this produces is always the same for the same
+// selections) and overlay the saved per-cell ownership and per-nation
+// troop/casualty state on top of it.
+const WAR_SAVE_KEY = 'irontide_war_save_v1';
+function saveWarInProgress(){
+  if (!S.pCode || !S.eCode || S.over) return false;
+  if (S.attackOrder) clearAttackOrder(true);
+  if (S.moveOrder) clearMoveOrder();
+  if (S.retreatOrder) clearRetreatOrder();
+  if (S.enemyAttackOrder) clearEnemyAttackOrder(true);
+  if (S.enemyRetreatOrder) clearEnemyRetreatOrder();
+  const pc = S.countries[S.pCode], ec = S.countries[S.eCode];
+  const save = {
+    v: 1, savedAtMs: Date.now(),
+    selections: S.selections,
+    simMs: S.simMs, cas: S.cas,
+    pTroops: pc.troops, eTroops: ec.troops,
+    pStats: pc.memberStats, eStats: ec.memberStats,
+    cells: S.cells.map(c => [c.ix, c.iy, c.owner, c.flagCountry, c.origCountry, c.homeSide]),
+  };
+  try { localStorage.setItem(WAR_SAVE_KEY, JSON.stringify(save)); return true; }
+  catch { return false; }
+}
+function loadSavedWarMeta(){
+  try {
+    const raw = localStorage.getItem(WAR_SAVE_KEY);
+    if (!raw) return null;
+    const save = JSON.parse(raw);
+    return { savedAtMs: save.savedAtMs, player: save.selections?.player, enemy: save.selections?.enemy?.[0] };
+  } catch { return null; }
+}
+function clearSavedWar(){
+  try { localStorage.removeItem(WAR_SAVE_KEY); } catch {}
+}
+function continueWar(){
+  let save;
+  try { save = JSON.parse(localStorage.getItem(WAR_SAVE_KEY) || 'null'); } catch { save = null; }
+  if (!save) return;
+
+  const sel = save.selections;
+  const pAllies = sel.allies || [];
+  const selectedEnemies = sel.enemy || [];
+  const enemyLead = selectedEnemies[0];
+  if (!sel.player || !enemyLead) return;
+
+  S.pCode = createFaction(sel.player, 'player', pAllies);
+  S.eCode = createFaction(enemyLead, 'enemy', selectedEnemies.slice(1));
+  S.selections = { player: sel.player, enemy: selectedEnemies, allies: pAllies };
+  const pc = S.countries[S.pCode], ec = S.countries[S.eCode];
+  pc.troops = save.pTroops; ec.troops = save.eTroops;
+  if (save.pStats) for (const [k,v] of Object.entries(save.pStats)) if (pc.memberStats[k]) pc.memberStats[k] = v;
+  if (save.eStats) for (const [k,v] of Object.entries(save.eStats)) if (ec.memberStats[k]) ec.memberStats[k] = v;
+  S.cas = save.cas || { p:0, e:0 };
+  S.simMs = save.simMs || 0;
+
+  $('pico').src = pc.flagUrl; $('eico').src = ec.flagUrl;
+  $('pmax').textContent = `/ ${fmt(pc.max)} MAX`;
+  $('rlbl').textContent = `REGEN: +${fmt(Math.floor(pc.max * C.REGEN_RATE))}/s`;
+  const allies = pc.allies.length ? pc.allies.map(k => S.countries[k]?.name).filter(Boolean).join(', ') : 'none';
+  $('allylbl').textContent = `ALLIES: ${allies.toUpperCase()}`;
+
+  $('menu').style.display = 'none';
+  $('game').style.display = 'block';
+  initMap();
+  buildCellGrid();
+  // Overlay the saved per-cell state onto the freshly (deterministically)
+  // rebuilt grid — same selections always produce the same ix/iy layout.
+  const byKey = new Map(save.cells.map(row => [row[0]+','+row[1], row]));
+  for (const cell of S.cells){
+    const row = byKey.get(cell.ix+','+cell.iy);
+    if (!row) continue;
+    cell.owner = row[2]; cell.flagCountry = row[3]; cell.origCountry = row[4]; cell.homeSide = row[5];
+  }
+  buildCoalitionHUD();
+  S.disp.pTroops = pc.troops;
+  S.disp.pCas = S.cas.p; S.disp.eCas = S.cas.e;
+  S.gameStartMs = Date.now();
+  S.aiNextRollAt = S.simMs + C.AI_ATTACK_GRACE_MS*0.1;
+  S.frontGroupState = {};
+  recountCells();
+  renderCells();
+  renderFlagsAndLabels();
+  refreshOrderHUD();
+  S.replay = [];
+  S.replaySnapTime = performance.now();
+  recordReplaySnapshot();
+  initAudio();
+  initVideo();
+  startLoops();
+  requestAnimationFrame(smoothFrame);
+}
+
 async function boot() {
+  S.persistentTerritory = loadCampaignTerritory();
   const msg = $('lmsg'), bar = $('lbar');
   $('lbwrap').style.display = 'block';
   try {
@@ -927,11 +1116,45 @@ function fillMenu() {
     S.pCode = ps.value || null;
     S.diplomacy = { allies:new Set(), enemies:new Set() };
     rebuildEnemy();
+    updateCampaignNote();
   };
+  updateCampaignNote();
+
+  const meta = loadSavedWarMeta();
+  if (meta){
+    $('continueWrap').style.display = 'block';
+    const when = new Date(meta.savedAtMs).toLocaleString();
+    const pName = S.countries[meta.player]?.name || meta.player;
+    const eName = S.countries[meta.enemy]?.name || meta.enemy;
+    $('continueMeta').textContent = `${pName} vs ${eName} · saved ${when}`;
+  }
+}
+// Shows accumulated campaign territory for whichever nation is currently
+// selected, and lets it be cleared — so growth from past wars is visible
+// rather than a silent hidden effect.
+function updateCampaignNote(){
+  const note = $('campaignNote');
+  if (!note) return;
+  if (!S.pCode){ note.style.display = 'none'; return; }
+  const owned = Object.keys(S.persistentTerritory||{}).filter(k => S.persistentTerritory[k] === S.pCode);
+  if (!owned.length){ note.style.display = 'none'; return; }
+  const names = owned.map(k => S.countries[k]?.name).filter(Boolean).join(', ');
+  note.style.display = 'block';
+  note.innerHTML = `🌍 Expanded territory from past wars: ${names} — <a href="#" onclick="resetCampaignPrompt();return false;" style="color:#ff8080">reset campaign</a>`;
+}
+function resetCampaignPrompt(){
+  if (!confirm('Reset all campaign territory gained from past wars? This cannot be undone.')) return;
+  resetCampaignTerritory();
+  updateCampaignNote();
 }
 
 function selectionMembers(code){
-  return EMPIRES[code]?.members || (code ? [code] : []);
+  const base = EMPIRES[code]?.members || (code ? [code] : []);
+  // Campaign growth: any real country annexed to this selection in a
+  // previous war is now permanently part of its territory too.
+  if (!code || !S.persistentTerritory) return base;
+  const extra = Object.keys(S.persistentTerritory).filter(k => S.persistentTerritory[k] === code && !base.includes(k));
+  return extra.length ? base.concat(extra) : base;
 }
 function selectionBorders(code){
   const members = new Set(selectionMembers(code));
@@ -1365,7 +1588,7 @@ function createFaction(selection, side, allies){
     const empireCtr = empOriginals.reduce((a,c) => [a[0] + c.ctr[0] * c.pop / Math.max(1,empirePop), a[1] + c.ctr[1] * c.pop / Math.max(1,empirePop)], [0,0]);
     if (!S.countries[selection]){
       S.countries[selection] = {
-        name: base.name, iso2: base.iso2, flagUrl: FLAG_URL(base.iso2),
+        name: base.name, flagUrl: empireFlagDataUri(selection),
         pop: empirePop, max: 0, troops: 0, ctrl: 'neutral',
         borders: [], ctr: empireCtr, feat: mergeFeatures(primaryMembers),
         isEmpireEntity: true,
@@ -1381,8 +1604,7 @@ function createFaction(selection, side, allies){
 
   const faction = S.countries[code] = {
     name: base ? base.name : primary.name,
-    iso2: base ? base.iso2 : primary.iso2,
-    flagUrl: FLAG_URL(base ? base.iso2 : primary.iso2), pop, max, troops:0,
+    flagUrl: base ? empireFlagDataUri(selection) : primary.flagUrl, pop, max, troops:0,
     ctrl:side, borders:[], ctr, feat:mergeFeatures(members), members,
     primaryMembers, allies: trueAllies, primary:selection, regenMult:1,
     rosterKeys, memberStats:{},
@@ -1516,7 +1738,7 @@ function startGame() {
   const pcInit = S.countries[S.pCode], ecInit = S.countries[S.eCode];
   pcInit.troops = Math.floor(pcInit.max * C.START_PCT);
   ecInit.troops = Math.floor(ecInit.max * C.START_PCT);
-  S.selections = { player:selectedPlayer, enemy:selectedEnemies };
+  S.selections = { player:selectedPlayer, enemy:selectedEnemies, allies:pAllies };
 
   const pc = S.countries[S.pCode], ec = S.countries[S.eCode];
 
@@ -1979,9 +2201,7 @@ function maybeStartAIRetreat(){
   if (S.over || S.enemyRetreatOrder || S.enemyAttackOrder) return;
   const ec = S.countries[S.eCode];
   const pc = S.countries[S.pCode];
-  const ratio = ec.troops / (ec.troops + pc.troops + 1);
-  if (ratio > 0.28) return; // only retreat when heavily outnumbered
-  if (Math.random() > 0.0015) return;
+  if (!shouldRetreat('enemy')) return;
 
   // Pick a retreat point: roughly 1/3 of the way from the enemy front
   // back into enemy territory — far enough to matter, not so far that
@@ -2130,173 +2350,211 @@ function nearestAnyCell(latlng){
   return best;
 }
 
-// ── AUTONOMOUS ENEMY AI ATTACK ────────────────────────────────────
-// Separately from anything the player does, the enemy AI periodically
-// rolls the dice to decide whether to launch its own offensive. This
-// is the ONLY way the enemy initiates an attack — it is never tied to
-// player action. While it's active, the player's troops near the
-// contested frontier automatically defend (see runPlayerAutoDefense),
-// but the player must still explicitly order any offensive of their
-// own — automatic defense never invades enemy soil.
-function maybeStartAIAttack(){
-  if (S.over || S.enemyAttackOrder) return;
-  const now = S.simMs;
-  if (now < (S.aiNextRollAt || 0)) return;
-  S.aiNextRollAt = now + C.AI_ATTACK_CHECK_MS;
+// ── SHARED AI BRAIN ─────────────────────────────────────────────
+// One decision-making core drives BOTH the enemy AI (always on) and the
+// player's AFK-mode AI — so AFK mode isn't a separately-dumber system,
+// and the enemy is a genuinely capable opponent rather than a scripted
+// pushover. It reasons per connected front sector (using the same
+// grouping that drives the on-map troop numbers) instead of one flat
+// global number, and "do nothing this cycle" is a real, common outcome
+// when no sector actually justifies committing troops.
+function frontierTouching(cell, side){
+  return cell.neighbors.some(nb => nb.owner === side);
+}
+// True local strength facing a specific one of our front groups: the
+// enemy front groups whose cells actually touch it, weighted by their
+// own share of the enemy's total front — not just "enemy army / fronts".
+function localOpposingForce(group, foeFieldForce, foeGroups, foeTotalFront, other){
+  const touching = new Set();
+  for (const c of group) for (const nb of c.neighbors) if (nb.owner === other) touching.add(nb);
+  if (!touching.size) return foeFieldForce / Math.max(1, foeGroups.length || 1);
+  const touchedGroups = foeGroups.filter(fg => fg.some(c => touching.has(c)));
+  const touchedTotal = touchedGroups.reduce((n,fg) => n+fg.length, 0) || touching.size;
+  return foeFieldForce * (touchedTotal / Math.max(1, foeTotalFront));
+}
+function shouldRetreat(side){
+  const other = side==='player' ? 'enemy' : 'player';
+  const mine = S.countries[side==='player'?S.pCode:S.eCode];
+  const foe  = S.countries[other==='player'?S.pCode:S.eCode];
+  if (!mine || !foe) return false;
+  const readiness = mine.troops / Math.max(1, mine.max);
+  if (readiness < 0.10) return true; // critically depleted regardless of anything else
+  const myGroups = frontGroups(side);
+  if (!myGroups.length) return false;
+  const foeGroups = frontGroups(other);
+  const myTotalFront = myGroups.reduce((n,g)=>n+g.length,0) || 1;
+  const foeTotalFront = foeGroups.reduce((n,g)=>n+g.length,0) || 1;
+  const myOrder  = side==='player' ? S.attackOrder : S.enemyAttackOrder;
+  const foeOrder = side==='player' ? S.enemyAttackOrder : S.attackOrder;
+  const myFieldForce  = mine.troops + (myOrder?.commit||0);
+  const foeFieldForce = foe.troops + (foeOrder?.commit||0);
+  let worst = Infinity;
+  for (const g of myGroups){
+    if (!g.some(c => frontierTouching(c, other))) continue;
+    const localMine = myFieldForce * (g.length/myTotalFront);
+    const localFoe = localOpposingForce(g, foeFieldForce, foeGroups, foeTotalFront, other);
+    worst = Math.min(worst, localMine / Math.max(1, localFoe));
+  }
+  // Badly overmatched on our weakest held sector AND no reserve left to
+  // reinforce it — that's when falling back beats holding a doomed line.
+  return worst < 0.32 && readiness < 0.4;
+}
+// The core call: look at every connected sector we hold, weigh it against
+// what's actually facing it, and either commit to the best opportunity,
+// fall back from an untenable position, or hold — genuinely do nothing.
+function decideFactionAction(side){
+  const other = side==='player' ? 'enemy' : 'player';
+  const mine = S.countries[side==='player'?S.pCode:S.eCode];
+  const foe  = S.countries[other==='player'?S.pCode:S.eCode];
+  if (!mine || !foe) return { action:'hold' };
 
-  const ec = S.countries[S.eCode], pc = S.countries[S.pCode];
-  if (!ec || !pc || ec.troops < ec.max * C.AI_ATTACK_MIN_TROOPS_FRAC) return;
+  const myGroups = frontGroups(side);
+  if (!myGroups.length) return { action:'invade' }; // no land front — only overseas landings make sense
 
-  const fronts = frontierCellsOf('enemy');
-  // A separated coalition has no adjacent cells yet. The AI uses the same
-  // travel-and-landing rule as the player instead of becoming permanently idle.
-  if (!fronts.length){
-    const commit=Math.max(500,Math.floor(ec.troops*0.18));
-    ec.troops-=commit;
-    if(!beginEnemyLongRangeInvasion(commit)) ec.troops+=commit;
+  if (shouldRetreat(side)) return { action:'retreat' };
+
+  const foeGroups = frontGroups(other);
+  const myTotalFront  = myGroups.reduce((n,g)=>n+g.length,0) || 1;
+  const foeTotalFront = foeGroups.reduce((n,g)=>n+g.length,0) || 1;
+  const myOrder  = side==='player' ? S.attackOrder : S.enemyAttackOrder;
+  const foeOrder = side==='player' ? S.enemyAttackOrder : S.attackOrder;
+  const myFieldForce  = mine.troops + (myOrder?.commit||0);
+  const foeFieldForce = foe.troops + (foeOrder?.commit||0);
+
+  let best = null;
+  for (const g of myGroups){
+    if (!g.some(c => frontierTouching(c, other))) continue; // interior — nothing to press here
+    const localMine = myFieldForce * (g.length/myTotalFront);
+    const localFoe = localOpposingForce(g, foeFieldForce, foeGroups, foeTotalFront, other);
+    const ratio = localMine / Math.max(1, localFoe);
+    // Opportunity bonus: sectors with several exposed enemy cells behind
+    // the line, not just the single most fortified point on the map.
+    const exposure = g.reduce((n,c) => n + c.neighbors.filter(nb=>nb.owner===other).length, 0);
+    const continuing = myOrder && myOrder._front === g ? 0.18 : 0; // prefer sustaining an existing push over jumping around
+    const score = ratio + exposure*0.012 + continuing + (Math.random()*0.08 - 0.04);
+    if (!best || score > best.score) best = { g, ratio, score };
+  }
+  if (!best) return { action:'hold' };
+
+  // A genuine "not worth it": the best sector still doesn't offer a real
+  // edge, and we're not already committed there reaping an existing gain.
+  if (best.ratio < 1.05 && !myOrder) return { action:'hold' };
+  if (best.ratio < 0.85) return { action:'hold' }; // even reinforcing a losing push is the wrong call
+
+  return { action:'attack', front:best.g, ratio:best.ratio };
+}
+function pickFocusCellInGroup(group, side){
+  const other = side==='player' ? 'enemy' : 'player';
+  let best=null, bestScore=-Infinity;
+  for (const c of group){
+    const targets = c.neighbors.filter(n => n.owner === other);
+    if (!targets.length) continue;
+    const pressure = targets.reduce((n,t) => n + t.neighbors.filter(x => x.owner === other).length, 0);
+    const score = pressure + Math.random()*0.5;
+    if (score > bestScore){ bestScore = score; best = c; }
+  }
+  return best || group[0];
+}
+// Applies whatever decideFactionAction() decided, through the exact same
+// order channels a human uses (S.attackOrder / S.enemyAttackOrder), so
+// combat resolution and defense are entirely unchanged downstream.
+function applyAiDecision(side, decision){
+  if (decision.action === 'retreat'){
+    if (side==='player') maybeStartPlayerRetreat(); else maybeStartAIRetreat();
+    return;
+  }
+  if (decision.action === 'invade'){
+    doAiOverseasLanding(side);
+    return;
+  }
+  if (decision.action !== 'attack') return; // hold — the right call, and a common one
+
+  const mine = S.countries[side==='player'?S.pCode:S.eCode];
+  const order = side==='player' ? S.attackOrder : S.enemyAttackOrder;
+  const focusCell = pickFocusCellInGroup(decision.front, side);
+  if (!focusCell) return;
+  const minFrac = side==='player' ? C.PLAYER_AI_MIN_TROOPS_FRAC : C.AI_ATTACK_MIN_TROOPS_FRAC;
+  const minPct  = side==='player' ? C.PLAYER_AI_MIN_COMMIT_PCT  : C.AI_ATTACK_MIN_COMMIT_PCT;
+  const maxPct  = side==='player' ? C.PLAYER_AI_MAX_COMMIT_PCT  : C.AI_ATTACK_MAX_COMMIT_PCT;
+
+  if (order){
+    if (mine.troops < mine.max*minFrac) return;
+    const topUpPct = clamp(0.08 + Math.max(0, decision.ratio-1)*0.18, 0.05, 0.3);
+    const topUp = Math.max(500, Math.floor(mine.troops*topUpPct));
+    mine.troops -= topUp;
+    order.commit += topUp;
+    order.lat = focusCell.c[0]; order.lng = focusCell.c[1]; order._front = decision.front;
+    if (order.marker) order.marker.setLatLng([focusCell.c[0], mapLng(focusCell.c[1])]);
+    if (side==='enemy') order.until = S.simMs + C.AI_ATTACK_MIN_DURATION_MS +
+      Math.random()*(C.AI_ATTACK_MAX_DURATION_MS-C.AI_ATTACK_MIN_DURATION_MS);
     return;
   }
 
-  // Strategic AI: measure readiness, territory, and front density before it
-  // spends a force.  A country fighting a long front with a depleted army
-  // will preserve its line; one with a local advantage looks for a weak
-  // sector.  This replaces the old calendar-driven random lunge.
-  const pHeld = pc.cellsOrigTotal ? pc.cellsHeld / pc.cellsOrigTotal : 1;
-  const eHeld = ec.cellsOrigTotal ? ec.cellsHeld / ec.cellsOrigTotal : 1;
-  const eReadiness = ec.troops / Math.max(1, ec.max);
-  const pReadiness = pc.troops / Math.max(1, pc.max);
-  const frontRatio = (battleStrength(ec) / Math.max(1, fronts.length)) /
-    (battleStrength(pc, S.attackOrder?.commit || 0) / Math.max(1, frontierCellsOf('player').length) + 1);
-  const attackingIntoOrder = !!S.attackOrder;
-  // A badly beaten AI does not throw reserves into an attack merely because
-  // it still has a few troops; it retreats/holds until it has a chance.
-  if (eReadiness < 0.12 || eHeld < 0.28 || (frontRatio < 0.48 && !attackingIntoOrder)) return;
-  const initiative = clamp((frontRatio - 0.55) * 0.34 + (eReadiness - pReadiness) * 0.22 + (pHeld - eHeld) * 0.12, 0, 0.42);
-  const chance = clamp(0.025 + initiative + (attackingIntoOrder ? 0.08 : 0), 0, 0.60);
-  if (Math.random() > chance) return;
-
-  // Prefer sectors with several exposed enemy cells and avoid blindly
-  // attacking the densest opposing concentration.
-  const scored = fronts.map(cell => {
-    const targets = cell.neighbors.filter(n => n.owner === 'player');
-    const pressure = targets.reduce((n,t) => n + t.neighbors.filter(x => x.owner === 'player').length, 0);
-    const distancePenalty = S.attackOrder ? Math.hypot(cell.c[0]-S.attackOrder.lat, cell.c[1]-S.attackOrder.lng) * 0.22 : 0;
-    return { cell, score:pressure - distancePenalty + Math.random()*0.35 };
-  }).sort((a,b) => b.score-a.score);
-  const focusCell = scored[0].cell;
-  const pct = clamp(0.12 + initiative * 0.65 + (attackingIntoOrder ? 0.08 : 0),
-                    C.AI_ATTACK_MIN_COMMIT_PCT, C.AI_ATTACK_MAX_COMMIT_PCT + 0.18);
-  const commit = Math.max(500, Math.floor(ec.troops * pct));
-  ec.troops -= commit;
-
-  const icon = L.divIcon({
-    className:'', iconAnchor:[0,0],
-    html:`<div class="enemyfocusring"></div>`
-  });
+  if (mine.troops < mine.max*minFrac) return;
+  const pct = clamp(minPct + Math.max(0, decision.ratio-1)*0.55, minPct, maxPct);
+  const commit = Math.max(500, Math.floor(mine.troops*pct));
+  mine.troops -= commit;
+  const icon = L.divIcon({ className:'', iconAnchor:[0,0],
+    html:`<div class="${side==='player'?'focusring':'enemyfocusring'}"></div>` });
   const marker = L.marker([focusCell.c[0], mapLng(focusCell.c[1])],
                           { icon, zIndexOffset: 950, interactive:false }).addTo(map);
-
-  const duration = C.AI_ATTACK_MIN_DURATION_MS +
-                    Math.random() * (C.AI_ATTACK_MAX_DURATION_MS - C.AI_ATTACK_MIN_DURATION_MS);
-  S.enemyAttackOrder = {
-    lat: focusCell.c[0], lng: focusCell.c[1],
-    commit, marker,
-    until: now + duration,
-  };
+  const newOrder = { lat:focusCell.c[0], lng:focusCell.c[1], commit, marker, intensityFrac:pct, _front:decision.front };
+  if (side==='player'){
+    S.attackOrder = newOrder;
+  } else {
+    newOrder.until = S.simMs + C.AI_ATTACK_MIN_DURATION_MS +
+      Math.random()*(C.AI_ATTACK_MAX_DURATION_MS-C.AI_ATTACK_MIN_DURATION_MS);
+    S.enemyAttackOrder = newOrder;
+  }
 }
-
-// ── AFK MODE: PLAYER-SIDE AI ATTACK ─────────────────────────────
-// This is the "Claude, you drive" version — deliberately more decisive
-// and continuous than the single enemy AI, since AFK mode is meant to
-// actually run the whole war rather than occasionally spectate it. It
-// re-evaluates on a fast cadence, keeps a push topped up and redirected
-// toward the sharpest sector instead of firing once and going quiet, and
-// only holds back troops (rather than refusing to act at all) when the
-// situation is bad — that's what maybeStartPlayerRetreat() is for.
-function maybeStartPlayerAI(){
-  if (!S.autoMode || S.over) return;
-  const now = S.simMs;
-  if (now < (S.playerAiNextRollAt || 0)) return;
-  S.playerAiNextRollAt = now + C.PLAYER_AI_CHECK_MS;
-  if (S.retreatOrder) return; // let an active withdrawal finish before attacking again
-
-  const pc = S.countries[S.pCode], ec = S.countries[S.eCode];
-  if (!pc || !ec) return;
-
-  const fronts = frontierCellsOf('player');
-  if (!fronts.length){
-    if (S.attackOrder) return; // already en route overseas
-    if (pc.troops < pc.max * C.PLAYER_AI_MIN_TROOPS_FRAC) return;
+function doAiOverseasLanding(side){
+  const mine = S.countries[side==='player'?S.pCode:S.eCode];
+  const order = side==='player' ? S.attackOrder : S.enemyAttackOrder;
+  if (order) return;
+  const minFrac = side==='player' ? C.PLAYER_AI_MIN_TROOPS_FRAC : C.AI_ATTACK_MIN_TROOPS_FRAC;
+  if (!mine || mine.troops < mine.max*minFrac) return;
+  if (side==='player'){
     const route = closestLandingTarget('player','enemy');
     if (!route) return;
-    const commit = Math.max(500, Math.floor(pc.troops * 0.24));
-    pc.troops -= commit;
+    const commit = Math.max(500, Math.floor(mine.troops * 0.22));
+    mine.troops -= commit;
     const icon = L.divIcon({ className:'', iconAnchor:[0,0], html:'<div class="focusring"></div>' });
     const marker = L.marker([route.target.c[0], mapLng(route.target.c[1])],
                             { icon, zIndexOffset: 950, interactive:false }).addTo(map);
     S.attackOrder = { lat: route.target.c[0], lng: route.target.c[1], commit, marker, intensityFrac: 0.5 };
     beginLongRangeInvasion(S.attackOrder, route.target);
-    return;
+  } else {
+    const commit = Math.max(500, Math.floor(mine.troops * 0.18));
+    mine.troops -= commit;
+    if (!beginEnemyLongRangeInvasion(commit)) mine.troops += commit;
   }
-
-  const pHeld = pc.cellsOrigTotal ? pc.cellsHeld / pc.cellsOrigTotal : 1;
-  const eHeld = ec.cellsOrigTotal ? ec.cellsHeld / ec.cellsOrigTotal : 1;
-  const pReadiness = pc.troops / Math.max(1, pc.max);
-  const eReadiness = ec.troops / Math.max(1, ec.max);
-  const frontRatio = (battleStrength(pc, S.attackOrder?.commit||0) / Math.max(1, fronts.length)) /
-    (battleStrength(ec, S.enemyAttackOrder?.commit || 0) / Math.max(1, frontierCellsOf('enemy').length) + 1);
-  // -0.2..0.5 — how favorable the moment is. Unlike the enemy AI, a poor
-  // reading doesn't make this function do nothing; it just shrinks the
-  // commit and lets maybeStartPlayerRetreat() decide whether to pull back.
-  const initiative = clamp((frontRatio - 0.5) * 0.4 + (pReadiness - eReadiness) * 0.25 + (eHeld - pHeld) * 0.15, -0.2, 0.5);
-
-  // Find the sharpest sector to press right now.
-  const scored = fronts.map(cell => {
-    const targets = cell.neighbors.filter(n => n.owner === 'enemy');
-    const pressure = targets.reduce((n,t) => n + t.neighbors.filter(x => x.owner === 'enemy').length, 0);
-    const distancePenalty = S.attackOrder ? Math.hypot(cell.c[0]-S.attackOrder.lat, cell.c[1]-S.attackOrder.lng) * 0.22 : 0;
-    return { cell, score: pressure - distancePenalty + Math.random()*0.35 };
-  }).sort((a,b) => b.score - a.score);
-  const focusCell = scored[0].cell;
-
-  if (S.attackOrder){
-    // Keep a single sustained offensive alive — top it up and, if the
-    // sharpest sector has shifted, redirect toward it — rather than
-    // abandoning it to start a fresh one every roll.
-    if (pc.troops < pc.max * C.PLAYER_AI_MIN_TROOPS_FRAC) return;
-    const topUp = Math.max(500, Math.floor(pc.troops * clamp(0.08 + Math.max(0,initiative)*0.3, 0.05, 0.3)));
-    pc.troops -= topUp;
-    S.attackOrder.commit += topUp;
-    S.attackOrder.lat = focusCell.c[0]; S.attackOrder.lng = focusCell.c[1];
-    if (S.attackOrder.marker) S.attackOrder.marker.setLatLng([focusCell.c[0], mapLng(focusCell.c[1])]);
-    return;
-  }
-
-  if (pc.troops < pc.max * C.PLAYER_AI_MIN_TROOPS_FRAC) return;
-  const pct = clamp(C.PLAYER_AI_MIN_COMMIT_PCT + Math.max(0, initiative) * 0.7,
-                    C.PLAYER_AI_MIN_COMMIT_PCT, C.PLAYER_AI_MAX_COMMIT_PCT);
-  const commit = Math.max(500, Math.floor(pc.troops * pct));
-  pc.troops -= commit;
-
-  const icon = L.divIcon({ className:'', iconAnchor:[0,0], html:'<div class="focusring"></div>' });
-  const marker = L.marker([focusCell.c[0], mapLng(focusCell.c[1])],
-                          { icon, zIndexOffset: 950, interactive:false }).addTo(map);
-  S.attackOrder = { lat: focusCell.c[0], lng: focusCell.c[1], commit, marker, intensityFrac: pct };
 }
 
-// ── AFK MODE: PLAYER-SIDE AI RETREAT ────────────────────────────
-// Mirror of maybeStartAIRetreat() above. Cancels (and refunds) any
-// ongoing AFK offensive first, then reuses the player's own
-// startRetreat() — the exact function a human triggers by clicking
-// their own territory — so the withdrawal plays out identically.
+// ── AUTONOMOUS ENEMY AI ATTACK ────────────────────────────────────
+// The enemy's own turn of the shared brain above — completely
+// independent of anything the player does. While it's active, the
+// player's troops near the contested frontier automatically defend
+// (see runPlayerAutoDefense), but the player must still explicitly
+// order any offensive of their own — automatic defense never invades.
+function maybeStartAIAttack(){
+  if (S.over || S.enemyRetreatOrder) return;
+  const now = S.simMs;
+  if (now < C.AI_ATTACK_GRACE_MS) return;
+  if (now < (S.aiNextRollAt || 0)) return;
+  S.aiNextRollAt = now + C.AI_EVAL_MS;
+  const ec = S.countries[S.eCode], pc = S.countries[S.pCode];
+  if (!ec || !pc) return;
+  applyAiDecision('enemy', decideFactionAction('enemy'));
+}
+
+// Mirror of maybeStartAIRetreat() above, using the same shared readiness
+// math (shouldRetreat) instead of a flat ratio+dice roll.
 function maybeStartPlayerRetreat(){
   if (!S.autoMode || S.over || S.retreatOrder) return;
   const pc = S.countries[S.pCode];
   const ec = S.countries[S.eCode];
   if (!pc || !ec) return;
-  const ratio = pc.troops / (pc.troops + ec.troops + 1);
-  if (ratio > 0.28) return;
-  if (Math.random() > 0.004) return;
+  if (!shouldRetreat('player')) return;
 
   const pFronts = frontierCellsOf('player');
   if (!pFronts.length) return;
@@ -2318,6 +2576,21 @@ function maybeStartPlayerRetreat(){
 
   if (S.attackOrder) clearAttackOrder(true);
   startRetreat(retLat, retLng);
+}
+
+// ── AFK MODE: PLAYER-SIDE AI ATTACK ─────────────────────────────
+// The player's own turn of the exact same shared brain the enemy uses
+// (decideFactionAction/applyAiDecision above) — evaluated far more
+// often than the enemy's cadence, since AFK mode is meant to actually
+// run the whole war rather than occasionally spectate it.
+function maybeStartPlayerAI(){
+  if (!S.autoMode || S.over || S.retreatOrder) return;
+  const now = S.simMs;
+  if (now < (S.playerAiNextRollAt || 0)) return;
+  S.playerAiNextRollAt = now + C.PLAYER_AI_CHECK_MS;
+  const pc = S.countries[S.pCode], ec = S.countries[S.eCode];
+  if (!pc || !ec) return;
+  applyAiDecision('player', decideFactionAction('player'));
 }
 
 // ── COMBAT TICK ───────────────────────────────────────────────────
@@ -3298,8 +3571,8 @@ function groupEnemyDirection(group, side){
   }
   return { dLat:dLat/cnt, dLng:dLng/cnt };
 }
-function frontComponents(side){
-  const fronts=frontierCellsOf(side), set=new Set(fronts), seen=new Set(), groups=[];
+function groupFrontierCells(fronts){
+  const set=new Set(fronts), seen=new Set(), groups=[];
   // Group with 8-directional adjacency, not just the 4-directional combat
   // neighbor list — a zigzagging border's frontier cells often only touch
   // each other diagonally, and treating that as "several fronts" was the
@@ -3317,6 +3590,17 @@ function frontComponents(side){
     }
     groups.push(group);
   }
+  return groups;
+}
+// Raw connected front groups, no display filtering/hysteresis — this is
+// what the AI brain reasons over, so it sees every real sector (even a
+// small one) rather than only the ones currently worth putting a number on.
+function frontGroups(side){
+  return groupFrontierCells(frontierCellsOf(side));
+}
+function frontComponents(side){
+  const fronts=frontierCellsOf(side);
+  const groups=groupFrontierCells(fronts);
   // A connected line is one theatre. Disconnected theatres each get their own
   // number when they are material, while tiny one-cell pockets stay quiet.
   // The modest relative threshold still permits four real fronts to display.
@@ -3535,6 +3819,8 @@ function updatePeaceButtons(){
 
 function endGame(won, reason){
   S.over = true;
+  clearSavedWar(); // this war is finished — nothing left to "continue"
+  const annexed = won === true ? annexConqueredTerritory() : [];
   if (S.audio) S.audio.pause();
   const vidEl = $('vidplayer');
   if (vidEl) vidEl.pause();
@@ -3552,10 +3838,12 @@ function endGame(won, reason){
     forced:     `Forced peace — enemy coalition capitulated (≥${Math.round(C.FORCE_PEACE_TERRITORY * 100)}% occupied)`,
   }[reason] || '';
   const daysElapsed = Math.floor(S.simMs / C.MS_PER_DAY);
+  const annexLine = annexed.length
+    ? `<br><span style="color:#8fd694">🌍 Annexed into your territory for future wars: ${annexed.map(k=>S.countries[k]?.name).filter(Boolean).join(', ')}</span>` : '';
   $('estats').innerHTML =
     `<img src="${pc.flagUrl}" alt=""> Your casualties: ${fmt(S.cas.p)}<br>
      <img src="${ec.flagUrl}" alt=""> Enemy casualties: ${fmt(S.cas.e)}<br>
-     <span style="color:#888">${reasonStr} · War lasted ${daysElapsed} days</span>`;
+     <span style="color:#888">${reasonStr} · War lasted ${daysElapsed} days</span>${annexLine}`;
 
   // Fade HUD out. #cas and #vidwrap are preserved — replay will re-show them.
   ['info','datepanel','ctrl'].forEach(id => {
@@ -3977,6 +4265,14 @@ function toggleAutoMode(){
     btn.textContent = '🤖 AFK MODE';
     btn.classList.remove('on');
   }
+}
+
+// Cancels any in-flight order (refunding it), snapshots the war to
+// localStorage, and returns to the menu, where CONTINUE WAR picks up
+// exactly this state.
+function saveAndExit(){
+  saveWarInProgress();
+  location.reload();
 }
 
 // ── BACKGROUND VIDEO ────────────────────────────────────────────────
