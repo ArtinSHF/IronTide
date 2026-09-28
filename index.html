@@ -269,6 +269,10 @@ body{background:#060606;color:#ddd;font-family:'Courier New',monospace}
     <div class="gsub">Choose your nation · Deploy your forces · Conquer</div>
     <div id="lmsg">▸ LOADING WORLD DATA...</div>
     <div id="lbwrap"><div id="lbar"></div></div>
+    <div id="continueWarWrap" style="display:none;margin-bottom:16px;text-align:center">
+      <button class="cbtn on" style="padding:10px 22px;font-size:14px" onclick="continueUnfinishedWar()">▶ CONTINUE WAR</button>
+      <div id="continueWarMeta" style="font-size:11px;color:#888;margin-top:6px"></div>
+    </div>
     <div id="selwrap">
       <div class="sgrp">
         <span class="slbl">YOUR NATION</span>
@@ -343,7 +347,7 @@ body{background:#060606;color:#ddd;font-family:'Courier New',monospace}
     <button class="cbtn" id="cancelbtn" onclick="cancelOrder()">✕ STAND DOWN</button>
     <div class="csep"></div>
     <button class="cbtn" id="peacebtn" onclick="whitePeace()" title="End the war with no winner — territory stays as-is">🕊 WHITE PEACE</button>
-    <button class="cbtn" id="forcebtn" onclick="forcePeace()" disabled title="Requires control of 95% of enemy territory">🏆 FORCE PEACE</button>
+    <button class="cbtn" id="forcebtn" onclick="forcePeace()" disabled title="Requires control of 93% of enemy territory">🏆 FORCE PEACE</button>
     <button class="cbtn" id="surrenderbtn" onclick="surrender()">⚫ SURRENDER</button>
   </div>
 
@@ -513,12 +517,14 @@ const C = {
   COMBAT_BUDGET_FLOOR:     0.12,  // weak side also gets fewer attempts per tick, not just lower odds
 
   // ── attacker / defender casualty modifiers ─
-  // Deliberately small but real: attacking bleeds ~10% more, defending ~10% less.
+  // Fixed role bias that stacks with the dynamic strength-gap premium in
+  // casualtyMults(): attacking bleeds ~10% more, defending ~10% less.
+  MAX_STRONGER_EXTRA: 0.45, // stronger side takes at most 45% more losses than the weaker
   ATK_CAS_MULT: 1.10,
   DEF_CAS_MULT: 0.90,
 
   // ── war-ending thresholds ─
-  FORCE_PEACE_TERRITORY: 0.95,  // hold ≥95% of enemy coalition land to force a victorious peace
+  FORCE_PEACE_TERRITORY: 0.93,  // hold ≥93% of enemy coalition land to force a victorious peace
 
   // ─ flag density (soldiers represented per flag, by army size) ─
   FLAG_TIER1_MAX:     1_000_000,  // below this →  1 flag per FLAG_DIV_LOW
@@ -564,7 +570,13 @@ const C = {
   // Replacements are deliberately much slower than combat.  A shattered
   // army must recover behind the line instead of instantly respawning.
   REGEN_RATE:   0.00016,
-  REGEN_MULT_SMOOTH: 0.05,    // how fast regen rate eases toward the held-territory level
+  REGEN_MULT_SMOOTH: 0.08,    // how fast regen rate eases toward the held-territory level
+  REGEN_HELD_POW: 2.2,        // regen target = heldFraction^this — losing land now hurts regen much harder
+  // Low-troop comeback: under LOW_TROOP_START total troops a side gets a regen
+  // boost and takes fewer losses, ramping to LOW_TROOP_MID_BOOST at LOW_TROOP_CRIT,
+  // then to LOW_TROOP_MAX_BOOST (5x) below it. Recomputed live for both sides.
+  LOW_TROOP_START: 100000, LOW_TROOP_CRIT: 5000,
+  LOW_TROOP_MID_BOOST: 2.0, LOW_TROOP_MAX_BOOST: 5.0, LOW_TROOP_MIN_TROOPS: 300,    // how fast regen rate eases toward the held-territory level
   DATE_START:   new Date('2020-01-01T00:00:00Z'),
   MS_PER_DAY:   1000,
   LERP_DISP:    0.08,
@@ -921,7 +933,8 @@ function annexConqueredTerritory(){
   for (const m of ec.members){
     const c = S.countries[m];
     if (!c || !c.cellsOrigTotal) continue;
-    if ((c.cellsHeld / c.cellsOrigTotal) >= 0.5 && S.persistentTerritory[m] !== winner){
+    const conqueredFrac = 1 - (c.cellsHeld / c.cellsOrigTotal); // cellsHeld = what its own side still holds
+    if (conqueredFrac >= 0.5 && S.persistentTerritory[m] !== winner){
       S.persistentTerritory[m] = winner;
       conquered.push(m);
     }
@@ -938,32 +951,65 @@ function annexConqueredTerritory(){
 // needed to rebuild an identical grid deterministically (the original
 // selections — the grid this produces is always the same for the same
 // selections) and overlay the saved per-cell ownership and per-nation
-// troop/casualty state on top of it.
+// troop/casualty state on top of it. In-flight attack orders (including
+// an overseas invasion mid-travel) are captured too, not cancelled —
+// "leave mid-war, come back, exactly where I was" includes current orders.
 //
 // Saves are keyed by the PLAYER'S selection code (their country or
 // empire), not a single global slot — so picking Germany always shows
 // Germany's own unfinished war, even if France or Italy was played
 // (and saved) more recently in between.
-const WAR_SAVE_KEY = 'irontide_war_save_v2';
+const WAR_SAVE_KEY = 'irontide_war_save_v3';
 function loadAllWarSaves(){
   try { return JSON.parse(localStorage.getItem(WAR_SAVE_KEY) || '{}'); }
   catch { return {}; }
 }
+function serializeOrder(order){
+  if (!order) return null;
+  return {
+    lat: order.lat, lng: order.lng, commit: order.commit, intensityFrac: order.intensityFrac,
+    phase: order.phase || null,
+    targetIx: order.targetCell ? order.targetCell.ix : null,
+    targetIy: order.targetCell ? order.targetCell.iy : null,
+    origin: order.origin || null,
+    travelStartedAt: order.travelStartedAt ?? null,
+    travelDuration: order.travelDuration ?? null,
+    until: order.until ?? null, // enemy order expiry only
+  };
+}
+function deserializeOrder(saved, side, byKey){
+  if (!saved) return null;
+  const icon = L.divIcon({ className:'', iconAnchor:[0,0],
+    html:`<div class="${side==='player'?'focusring':'enemyfocusring'}"></div>` });
+  const marker = L.marker([saved.lat, mapLng(saved.lng)],
+                          { icon, zIndexOffset: 950, interactive:false }).addTo(map);
+  const order = { lat:saved.lat, lng:saved.lng, commit:saved.commit, intensityFrac:saved.intensityFrac, marker };
+  if (saved.phase === 'travel'){
+    order.phase = 'travel';
+    order.targetCell = byKey.get(saved.targetIx+','+saved.targetIy) || null;
+    order.origin = saved.origin;
+    order.travelStartedAt = saved.travelStartedAt;
+    order.travelDuration = saved.travelDuration;
+    if (order.origin) order.travelMarker = makeTravelMarker(order.origin[0], order.origin[1]);
+  }
+  if (side === 'enemy' && saved.until != null) order.until = saved.until;
+  return order;
+}
 function saveWarInProgress(){
   if (!S.pCode || !S.eCode || S.over) return false;
-  if (S.attackOrder) clearAttackOrder(true);
-  if (S.moveOrder) clearMoveOrder();
-  if (S.enemyAttackOrder) clearEnemyAttackOrder(true);
   const pc = S.countries[S.pCode], ec = S.countries[S.eCode];
   const playerKey = S.selections?.player;
   if (!playerKey) return false;
   const save = {
-    v: 2, savedAtMs: Date.now(),
+    v: 3, savedAtMs: Date.now(),
+    fresh: !!S.freshStart,
     selections: S.selections,
     simMs: S.simMs, cas: S.cas,
     pTroops: pc.troops, eTroops: ec.troops,
     pStats: pc.memberStats, eStats: ec.memberStats,
     cells: S.cells.map(c => [c.ix, c.iy, c.owner, c.flagCountry, c.origCountry, c.homeSide]),
+    attackOrder: serializeOrder(S.attackOrder),
+    enemyAttackOrder: serializeOrder(S.enemyAttackOrder),
   };
   try {
     const all = loadAllWarSaves();
@@ -996,8 +1042,9 @@ function continueWarFor(playerCode){
   const enemyLead = selectedEnemies[0];
   if (!sel.player || !enemyLead) return;
 
-  S.pCode = createFaction(sel.player, 'player', pAllies);
-  S.eCode = createFaction(enemyLead, 'enemy', selectedEnemies.slice(1));
+  S.freshStart = !!save.fresh;
+  S.pCode = createFaction(sel.player, 'player', pAllies, S.freshStart);
+  S.eCode = createFaction(enemyLead, 'enemy', selectedEnemies.slice(1), true);
   S.selections = { player: sel.player, enemy: selectedEnemies, allies: pAllies };
   const pc = S.countries[S.pCode], ec = S.countries[S.eCode];
   pc.troops = save.pTroops; ec.troops = save.eTroops;
@@ -1030,6 +1077,10 @@ function continueWarFor(playerCode){
   S.gameStartMs = Date.now();
   S.aiNextRollAt = S.simMs + C.AI_ATTACK_GRACE_MS*0.1;
   S.frontGroupState = {};
+  // Current orders — including a naval invasion mid-transit — are part
+  // of "exactly where I left off" too.
+  S.attackOrder = deserializeOrder(save.attackOrder, 'player', S.cellByXY);
+  S.enemyAttackOrder = deserializeOrder(save.enemyAttackOrder, 'enemy', S.cellByXY);
   recountCells();
   renderCells();
   renderFlagsAndLabels();
@@ -1129,45 +1180,85 @@ function fillMenu() {
   };
   updateCampaignNote();
   applyCampaignChoiceUI();
+  // System A (mid-war): shown immediately, above the country selector,
+  // with no country selection required — exactly like before.
+  showContinueWarBarIfAny();
 }
-// Decides, for whichever nation/empire is currently selected, whether to
-// show the NEW GAME / CONTINUE choice (a saved war exists for exactly
-// this selection) or go straight to the normal war-plan/diplomacy flow.
+
+// ── SYSTEM A: MID-WAR "CONTINUE WAR" ────────────────────────────────
+// A war that was still ONGOING when the player left. This has nothing
+// to do with campaign territory below — it's a snapshot of an
+// unfinished battle (exact cells, troops, losses, orders, in-game
+// date) and it surfaces the instant the menu opens, before any
+// country is picked.
+function showContinueWarBarIfAny(){
+  const wrap = $('continueWarWrap');
+  const all = loadAllWarSaves();
+  const keys = Object.keys(all);
+  if (!keys.length){ wrap.style.display = 'none'; return; }
+  // If somehow more than one unfinished war is on disk, surface the
+  // most recently left one.
+  keys.sort((a,b) => (all[b].savedAtMs||0) - (all[a].savedAtMs||0));
+  const key = keys[0];
+  const save = all[key];
+  wrap.style.display = 'block';
+  wrap.dataset.playerKey = key;
+  const when = new Date(save.savedAtMs).toLocaleString();
+  const pName = S.countries[save.selections?.player]?.name || save.selections?.player || key;
+  const eName = S.countries[save.selections?.enemy?.[0]]?.name || save.selections?.enemy?.[0] || '?';
+  $('continueWarMeta').textContent = `${pName} vs ${eName} · saved ${when}`;
+}
+function continueUnfinishedWar(){
+  const key = $('continueWarWrap').dataset.playerKey;
+  if (key) continueWarFor(key);
+}
+
+// ── SYSTEM B: POST-WAR CAMPAIGN (NEW GAME / CONTINUE) ───────────────
+// Whichever nation/empire is picked from the dropdown: if it holds any
+// territory annexed from a war it already WON (S.persistentTerritory),
+// offer NEW GAME (start that nation from its original borders,
+// ignoring the annexed territory for this game) or CONTINUE (start
+// this next war already owning everything it previously conquered).
+// This is completely independent of System A above — it applies
+// whether or not there's also an unfinished war on disk.
 function applyCampaignChoiceUI(){
   const choice = $('campaignChoice');
+  S.freshStart = false; // default: campaign growth applies, as it always has
   if (!S.pCode){
     choice.style.display = 'none';
     $('diplo').style.display = 'none';
     $('sbtn').style.display = '';
     return;
   }
-  const meta = loadSavedWarMetaFor(S.pCode);
-  if (meta){
+  const hasGrowth = Object.values(S.persistentTerritory||{}).includes(S.pCode);
+  if (hasGrowth){
     choice.style.display = 'block';
     $('diplo').style.display = 'none';
     $('sbtn').style.display = 'none';
-    const when = new Date(meta.savedAtMs).toLocaleString();
+    const owned = Object.keys(S.persistentTerritory).filter(k => S.persistentTerritory[k] === S.pCode);
+    const names = owned.map(k => S.countries[k]?.name).filter(Boolean).join(', ');
     const pName = S.countries[S.pCode]?.name || S.pCode;
-    const eName = S.countries[meta.enemy]?.name || meta.enemy;
     $('campaignChoiceMeta').innerHTML =
-      `You have a war in progress as <b>${pName}</b> vs ${eName} — saved ${when}.`;
+      `<b>${pName}</b> has previously conquered: ${names}.`;
   } else {
     choice.style.display = 'none';
     $('sbtn').style.display = '';
     rebuildEnemy();
   }
 }
-// CONTINUE: resume the saved war for the currently selected nation/empire
-// exactly where it was left, including any mid-war conquered territory.
+// CONTINUE: start the next war as this nation WITH everything it has
+// previously conquered (the default/normal behavior).
 function chooseContinueCampaign(){
-  if (!S.pCode) return;
-  continueWarFor(S.pCode);
+  S.freshStart = false;
+  $('campaignChoice').style.display = 'none';
+  $('sbtn').style.display = '';
+  rebuildEnemy();
 }
-// NEW GAME: ignore the in-progress save for this selection (it stays on
-// disk untouched unless/until overwritten) and start completely fresh —
-// still folding in territory permanently annexed from past VICTORIES
-// (see selectionMembers/persistentTerritory), just not this unfinished war.
+// NEW GAME: start this nation from its ORIGINAL borders, ignoring any
+// territory it annexed in past wars for this game only. Nothing on
+// disk is touched — picking CONTINUE again later still restores it.
 function chooseNewCampaign(){
+  S.freshStart = true;
   $('campaignChoice').style.display = 'none';
   $('sbtn').style.display = '';
   rebuildEnemy();
@@ -1191,11 +1282,13 @@ function resetCampaignPrompt(){
   updateCampaignNote();
 }
 
-function selectionMembers(code){
+function selectionMembers(code, ignoreCampaign){
   const base = EMPIRES[code]?.members || (code ? [code] : []);
   // Campaign growth: any real country annexed to this selection in a
-  // previous war is now permanently part of its territory too.
-  if (!code || !S.persistentTerritory) return base;
+  // previous war is now permanently part of its territory too — unless
+  // this specific game was explicitly started as NEW GAME, in which
+  // case we deliberately ignore it and use the original borders.
+  if (!code || !S.persistentTerritory || ignoreCampaign) return base;
   const extra = Object.keys(S.persistentTerritory).filter(k => S.persistentTerritory[k] === code && !base.includes(k));
   return extra.length ? base.concat(extra) : base;
 }
@@ -1236,9 +1329,9 @@ function renderDiplomacy(){
   // moment the empire itself (or another empire sharing that territory) is
   // picked on either side, and vice versa. This is what actually keeps
   // "Roman Empire" from also letting someone pick "Italy" separately.
-  const usedFootprint = new Set(selectionMembers(S.pCode));
-  for (const k of d.allies)   for (const m of selectionMembers(k)) usedFootprint.add(m);
-  for (const k of d.enemies)  for (const m of selectionMembers(k)) usedFootprint.add(m);
+  const usedFootprint = new Set(selectionMembers(S.pCode, S.freshStart));
+  for (const k of d.allies)   for (const m of selectionMembers(k, true)) usedFootprint.add(m);
+  for (const k of d.enemies)  for (const m of selectionMembers(k, true)) usedFootprint.add(m);
 
   const options = (d.options || []).filter(o => o.name.toLowerCase().includes(filter));
   const list = (side, id) => {
@@ -1248,7 +1341,7 @@ function renderDiplomacy(){
     const visible = options.filter(o => {
       if (other.has(o.k)) return false;
       if (chosen.has(o.k)) return true;
-      return !selectionMembers(o.k).some(m => usedFootprint.has(m));
+      return !selectionMembers(o.k, true).some(m => usedFootprint.has(m));
     });
     if (!visible.length){ host.innerHTML = '<div class="diploEmpty">NO COUNTRIES FOUND</div>'; return; }
     for (const o of visible){
@@ -1605,8 +1698,8 @@ function mergeFeatures(members){
   return { type:'Feature', _wrapDateline:wraps, properties:{}, geometry:{ type:'MultiPolygon', coordinates:polygons } };
 }
 
-function createFaction(selection, side, allies){
-  const primaryMembers = selectionMembers(selection).filter(c => S.countries[c]);
+function createFaction(selection, side, allies, ignoreCampaign){
+  const primaryMembers = selectionMembers(selection, ignoreCampaign).filter(c => S.countries[c]);
   const trueAllies = [...new Set(allies || [])].filter(c => S.countries[c] && !primaryMembers.includes(c));
   // `members` stays the full real-ISO3 territorial roster — grid geometry,
   // borders and per-nation land stats all still need the actual countries.
@@ -1670,11 +1763,28 @@ function createFaction(selection, side, allies){
 function memberForce(faction, code){
   return faction?.memberStats?.[code]?.troops || 0;
 }
+// Live low-troop comeback multiplier (1 = none). Uses the side's whole field
+// force (reserve + committed) so it reacts the instant troops change.
+function lowTroopBoost(faction){
+  const isPlayer = faction===S.countries[S.pCode];
+  if (!isPlayer && faction!==S.countries[S.eCode]) return 1; // only the two war factions
+  const orders = isPlayer ? [S.attackOrder] : [S.enemyAttackOrder];
+  const total = faction.troops + orders.reduce((n,o)=>n+Math.max(0,o?.commit||0),0);
+  if (total >= C.LOW_TROOP_START) return 1;
+  if (total > C.LOW_TROOP_CRIT){
+    const t = (C.LOW_TROOP_START-total)/(C.LOW_TROOP_START-C.LOW_TROOP_CRIT);
+    return 1 + (C.LOW_TROOP_MID_BOOST-1)*t;
+  }
+  const t = clamp(1 - total/C.LOW_TROOP_CRIT, 0, 1); // 0 at 5k → 1 near 0
+  return C.LOW_TROOP_MID_BOOST + (C.LOW_TROOP_MAX_BOOST-C.LOW_TROOP_MID_BOOST)*Math.min(1, t*4);
+}
 function applyFactionLoss(faction, requested, preferredCountry){
   const isPlayer=faction===S.countries[S.pCode];
   const orders=isPlayer ? [S.attackOrder,S.moveOrder] : [S.enemyAttackOrder];
   const committed=orders.reduce((sum,o)=>sum+Math.max(0,o?.commit||0),0);
-  const loss=Math.min(Math.max(0,requested), faction.troops+committed);
+  // Small armies bleed less (live), and never get ground all the way to 0.
+  const boosted=Math.max(0,requested)/lowTroopBoost(faction);
+  const loss=Math.min(boosted, Math.max(0, faction.troops+committed-C.LOW_TROOP_MIN_TROOPS));
   // Formations fighting at the front absorb the loss first.  This prevents a
   // 99% commitment from making troops effectively immortal just because the
   // reserve pool is nearly empty.
@@ -1776,8 +1886,8 @@ function startGame() {
     .filter(c => c !== selectedPlayer && !pAllies.includes(c) && S.countries[c]);
   if (!selectedEnemies.length) return;
   const enemyLead = selectedEnemies[0];
-  S.pCode = createFaction(selectedPlayer, 'player', pAllies);
-  S.eCode = createFaction(enemyLead, 'enemy', selectedEnemies.slice(1));
+  S.pCode = createFaction(selectedPlayer, 'player', pAllies, S.freshStart);
+  S.eCode = createFaction(enemyLead, 'enemy', selectedEnemies.slice(1), true);
   const pcInit = S.countries[S.pCode], ecInit = S.countries[S.eCode];
   pcInit.troops = Math.floor(pcInit.max * C.START_PCT);
   ecInit.troops = Math.floor(ecInit.max * C.START_PCT);
@@ -2183,17 +2293,27 @@ function overseasOpportunityAvailable(side){
   }
   return true; // enemy's overseas landing has its own internal route check
 }
+// FIX 6: this must return an ENEMY-owned cell — the actual objective —
+// exactly like a player's manual attack order always targets enemy land.
+// It previously returned the FRIENDLY cell nearest the front, which
+// meant the AI's attack marker visually sat on the player's own
+// territory (looking exactly like "the AI is attacking my own land"),
+// and silently stalled every push: runPlayerPush/runEnemyPush both
+// bail out the instant the order's target cell isn't enemy-owned
+// (the "objective already reached" check), which was true immediately
+// since the target was never enemy land to begin with.
 function pickFocusCellInGroup(group, side){
   const other = side==='player' ? 'enemy' : 'player';
   let best=null, bestScore=-Infinity;
   for (const c of group){
-    const targets = c.neighbors.filter(n => n.owner === other);
-    if (!targets.length) continue;
-    const pressure = targets.reduce((n,t) => n + t.neighbors.filter(x => x.owner === other).length, 0);
-    const score = pressure + Math.random()*0.5;
-    if (score > bestScore){ bestScore = score; best = c; }
+    for (const t of c.neighbors){
+      if (t.owner !== other) continue;
+      const pressure = t.neighbors.filter(x => x.owner === other).length;
+      const score = pressure + Math.random()*0.5;
+      if (score > bestScore){ bestScore = score; best = t; }
+    }
   }
-  return best || group[0];
+  return best; // null if this group has no actual enemy contact — caller must handle that
 }
 // Applies whatever decideFactionAction() decided, through the exact same
 // order channels a human uses (S.attackOrder / S.enemyAttackOrder), so
@@ -2208,7 +2328,11 @@ function applyAiDecision(side, decision){
   const mine = S.countries[side==='player'?S.pCode:S.eCode];
   const order = side==='player' ? S.attackOrder : S.enemyAttackOrder;
   const focusCell = pickFocusCellInGroup(decision.front, side);
-  if (!focusCell) return;
+  // Hard safety net: never issue an attack order at anything that isn't
+  // currently enemy-controlled ground (own, allied and neutral cells all
+  // fail this check). Ownership is re-read live at the moment of ordering.
+  const foeSide = side==='player' ? 'enemy' : 'player';
+  if (!focusCell || focusCell.owner !== foeSide) return;
   const minFrac = side==='player' ? C.PLAYER_AI_MIN_TROOPS_FRAC : C.AI_ATTACK_MIN_TROOPS_FRAC;
   const minPct  = side==='player' ? C.PLAYER_AI_MIN_COMMIT_PCT  : C.AI_ATTACK_MIN_COMMIT_PCT;
   const maxPct  = side==='player' ? C.PLAYER_AI_MAX_COMMIT_PCT  : C.AI_ATTACK_MAX_COMMIT_PCT;
@@ -2409,23 +2533,36 @@ function combatBudgetScale(weight){
   return clamp(weight, C.COMBAT_BUDGET_FLOOR, 1);
 }
 
-// ── FIX 5: relative-strength casualty scaling ──────────────────────
-// Previously each side's per-flip loss depended only on ITS OWN max
-// army size, completely independent of who it was actually fighting.
-// That meant a 10M-troop army attacking a 100K-troop army lost MORE
-// absolute troops per flip than the tiny defender did — the exact
-// opposite of what should happen. Losses now also scale with the
-// actual strength ratio of the engagement: the stronger side (whichever
-// one it is, attacker or defender) inflicts more and suffers less,
-// the weaker side inflicts less and suffers more — clamped so a small
-// nation can still make an attack costly and never becomes literally
-// unable to hurt back.
+// ── FIX 6: casualty balance — dynamic, strength-gap based ──────────
+// Previous version tied each side's loss to ITS OWN max army size
+// independent of the fight, which is what caused the original giant-
+// vs-minnow absurdity. This version instead:
+//   1. Scales BOTH sides' losses off the smaller of the two currently
+//      engaged forces (engagedScale) — a fight simply can't produce
+//      losses bigger than the smaller army actually has to lose,
+//      regardless of either nation's total population/max.
+//   2. Whichever side is CURRENTLY stronger (recomputed fresh every
+//      call from the current troop counts — never frozen at the start
+//      of the battle) takes a modest premium on top: +5% at a small
+//      edge, rising smoothly toward +40% at an overwhelming one. The
+//      weaker side's multiplier always stays at a flat 1.0 — there is
+//      no separate fixed attacker/defender bonus stacked on top of this.
 function casualtyMults(effAttacker, effDefender){
-  const strengthRatio = clamp(effAttacker / Math.max(1, effDefender), 0.05, 20);
-  return {
-    atk: clamp(1 / strengthRatio, 0.2, 3),   // dominant attacker loses less per flip
-    def: clamp(strengthRatio, 0.2, 3),        // dominant attacker inflicts more per flip
-  };
+  const engagedScale = Math.max(1, Math.min(effAttacker, effDefender));
+  const stronger = Math.max(effAttacker, effDefender);
+  const gap = Math.log(Math.max(1, stronger) / engagedScale); // 0 at parity, grows with the gap
+  const extra = clamp(0.05 + 0.35 * (1 - 1/(1 + 1.2*gap)), 0.05, 0.40);
+  const atkStronger = effAttacker >= effDefender;
+  // Dynamic strength premium (stronger side) stacked with the fixed
+  // attacker/defender role modifier.
+  let atk = C.ATK_CAS_MULT * (atkStronger ? 1+extra : 1);
+  let def = C.DEF_CAS_MULT * (atkStronger ? 1 : 1+extra);
+  // Hard cap: the stronger side never takes more than MAX_STRONGER_EXTRA
+  // more losses than the weaker side, however the two effects stack.
+  const cap = 1 + C.MAX_STRONGER_EXTRA;
+  if (atkStronger){ if (atk > def*cap) atk = def*cap; }
+  else            { if (def > atk*cap) def = atk*cap; }
+  return { atk, def, engagedScale };
 }
 
 // ── PLAYER PUSH ───────────────────────────────────────────────────
@@ -2522,8 +2659,8 @@ function runPlayerPush({ attackerCountry, defenderCountry, frontiers, changed })
     // regardless of whether it's a 500K or 20M-troop matchup.
     const troopsPerFlip = Math.max(50, Math.floor(attackerCountry.max * C.TROOPS_PER_FLIP_FRAC));
     const atkSpend = troopsPerFlip;
-    const atkLoss  = attackerCountry.max * C.ATTACKER_LOSS_FRAC * (0.6 + Math.random()*0.8) * C.ATK_CAS_MULT * cm.atk;
-    const defLoss  = defenderCountry.max * C.DEFENDER_LOSS_FRAC * (0.6 + Math.random()*0.8) * C.DEF_CAS_MULT * cm.def;
+    const atkLoss  = cm.engagedScale * C.ATTACKER_LOSS_FRAC * (0.6 + Math.random()*0.8) * cm.atk;
+    const defLoss  = cm.engagedScale * C.DEFENDER_LOSS_FRAC * (0.6 + Math.random()*0.8) * cm.def;
 
     order.commit = Math.max(0, order.commit - atkSpend);
     const atkActual=applyFactionLoss(attackerCountry, atkLoss, cand.from.flagCountry);
@@ -2603,8 +2740,8 @@ function runEnemyCounter({ attackerCountry, defenderCountry, frontiers, changed 
     const defenderFormation=cell.flagCountry;
     setCellOwner(cell, 'enemy', cand.from);
 
-    const atkLoss = attackerCountry.max * C.COUNTER_LOSS_FRAC   * (0.5 + Math.random()*0.9) * C.ATK_CAS_MULT * cm.atk;
-    const defLoss = defenderCountry.max * C.ATTACKER_LOSS_FRAC  * (0.5 + Math.random()*0.9) * C.DEF_CAS_MULT * cm.def;
+    const atkLoss = cm.engagedScale * C.COUNTER_LOSS_FRAC   * (0.5 + Math.random()*0.9) * cm.atk;
+    const defLoss = cm.engagedScale * C.ATTACKER_LOSS_FRAC  * (0.5 + Math.random()*0.9) * cm.def;
 
     const atkActual=applyFactionLoss(attackerCountry, atkLoss, cand.from.flagCountry);
     const defActual=applyFactionLoss(defenderCountry, defLoss, defenderFormation);
@@ -2676,8 +2813,8 @@ function runEnemyPush({ attackerCountry, defenderCountry, frontiers, changed }){
     const defenderFormation=cell.flagCountry;
     setCellOwner(cell, 'enemy', cand.from);
 
-    const atkLoss = attackerCountry.max * C.ATTACKER_LOSS_FRAC * (0.6 + Math.random()*0.8) * C.ATK_CAS_MULT * cm.atk;
-    const defLoss = defenderCountry.max * C.DEFENDER_LOSS_FRAC * (0.6 + Math.random()*0.8) * C.DEF_CAS_MULT * cm.def;
+    const atkLoss = cm.engagedScale * C.ATTACKER_LOSS_FRAC * (0.6 + Math.random()*0.8) * cm.atk;
+    const defLoss = cm.engagedScale * C.DEFENDER_LOSS_FRAC * (0.6 + Math.random()*0.8) * cm.def;
 
     order.commit = Math.max(0, order.commit - troopsPerFlipE);
     const atkActual=applyFactionLoss(attackerCountry, atkLoss, cand.from.flagCountry);
@@ -2740,8 +2877,8 @@ function runPlayerAutoDefense({ ec, pc, frontiers, changed }){
     const defenderFormation=cell.flagCountry;
     setCellOwner(cell, 'player', cand.from);
 
-    const atkLoss = pc.max * C.COUNTER_LOSS_FRAC  * (0.5 + Math.random()*0.9) * C.ATK_CAS_MULT * cm.atk;
-    const defLoss = ec.max * C.ATTACKER_LOSS_FRAC * (0.5 + Math.random()*0.9) * C.DEF_CAS_MULT * cm.def;
+    const atkLoss = cm.engagedScale * C.COUNTER_LOSS_FRAC  * (0.5 + Math.random()*0.9) * cm.atk;
+    const defLoss = cm.engagedScale * C.ATTACKER_LOSS_FRAC * (0.5 + Math.random()*0.9) * cm.def;
 
     const atkActual=applyFactionLoss(pc, atkLoss, cand.from.flagCountry);
     const defActual=applyFactionLoss(ec, defLoss, defenderFormation);
@@ -2773,12 +2910,12 @@ function regenTick(){
     if (c.ctrl === 'neutral') continue;
     const held = c.cellsOrigTotal ? (c.cellsHeld / c.cellsOrigTotal) : 1;
     if (c.regenMult === undefined) c.regenMult = 1;
-    c.regenMult = lerp(c.regenMult, held, C.REGEN_MULT_SMOOTH);
-    const gain = Math.floor(c.max * C.REGEN_RATE * c.regenMult);
+    c.regenMult = lerp(c.regenMult, Math.pow(held, C.REGEN_HELD_POW), C.REGEN_MULT_SMOOTH);
+    const gain = Math.floor(c.max * C.REGEN_RATE * c.regenMult * lowTroopBoost(c));
     addFactionReplacements(c, gain);
   }
   const pc = S.countries[S.pCode];
-  if (pc) $('rlbl').textContent = `REGEN: +${fmt(Math.floor(pc.max * C.REGEN_RATE * pc.regenMult))}/s`;
+  if (pc) $('rlbl').textContent = `REGEN: +${fmt(Math.floor(pc.max * C.REGEN_RATE * pc.regenMult * lowTroopBoost(pc)))}/s`;
 }
 
 // ── FLAGS + LABELS ────────────────────────────────────────────────
@@ -3508,7 +3645,7 @@ function rewindToWarStart(){
   renderFlagsAndLabels();
 }
 
-// 🏆 FORCE PEACE — available once the player's side controls ≥95% of the
+// 🏆 FORCE PEACE — available once the player's side controls ≥93% of the
 // enemy coalition's original territory, so you never have to hunt down one
 // microscopic island holding 0.00001% of their land to finish the war.
 function forcePeaceEligible(){
@@ -3985,14 +4122,14 @@ function toggleAutoMode(){
 
 // The game now saves automatically instead of requiring a manual
 // "Save & Exit" button — the player should be able to just close the
-// tab/app and pick up later via CONTINUE on the menu. We hook every
+// tab/app and pick up later via CONTINUE WAR on the menu. We hook every
 // realistic "leaving" signal: an actual unload, and the page being
 // hidden (tab switch, app backgrounded/killed on mobile — the most
 // reliable signal on phones, where beforeunload/pagehide alone can be
-// unreliable). We deliberately do NOT save on a timer while the war is
-// visibly in progress — saving cancels/refunds any in-flight attack
-// order (see saveWarInProgress), so a periodic autosave would keep
-// interrupting an active offensive.
+// unreliable) — plus a periodic safety net in case none of those fire
+// (e.g. the app/tab is killed outright). A save no longer cancels any
+// in-flight attack order — it's captured and restored as-is — so
+// saving on a timer no longer interrupts an active offensive.
 function autosaveIfActive(){
   if (S.pCode && S.eCode && !S.over) saveWarInProgress();
 }
@@ -4001,6 +4138,7 @@ window.addEventListener('beforeunload', autosaveIfActive);
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden') autosaveIfActive();
 });
+setInterval(autosaveIfActive, 15000);
 
 // ── BACKGROUND VIDEO ────────────────────────────────────────────────
 // Same loading/sequencing pattern as the audio track above: load one
