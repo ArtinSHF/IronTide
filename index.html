@@ -258,6 +258,28 @@ body{background:#060606;color:#ddd;font-family:'Courier New',monospace}
 .ebtn.ebtn-alt:hover{background:#222;border-color:#666}
 #rprogarea:hover #rprogtrack,
 #rprogarea.dragging #rprogtrack{height:7px}
+
+/* Continue War — polished primary action on the menu */
+#continueWarWrap{margin:0 auto 20px;max-width:480px}
+.cwcard{
+  border:1px solid #8a1c1c;background:linear-gradient(180deg,#1e0808 0%,#0d0404 100%);
+  box-shadow:0 0 30px rgba(201,32,32,.18),inset 0 0 26px rgba(201,32,32,.06);
+  padding:16px 18px 18px;text-align:center
+}
+.cwtag{font-size:9px;letter-spacing:.34em;color:#c98080;text-transform:uppercase;margin-bottom:10px}
+.cwbtn{
+  width:100%;padding:13px 22px;font-size:15px;font-weight:bold;letter-spacing:.14em;
+  background:linear-gradient(180deg,#e23030,#a51212);border-color:#e04444;color:#fff;
+  box-shadow:0 0 20px rgba(201,32,32,.45);text-shadow:0 1px 2px rgba(0,0,0,.6);
+  animation:cwpulse 2.4s ease-in-out infinite
+}
+.cwbtn:hover{background:linear-gradient(180deg,#f04040,#b51616);border-color:#ff6a6a;color:#fff}
+@keyframes cwpulse{
+  0%,100%{box-shadow:0 0 14px rgba(201,32,32,.35)}
+  50%{box-shadow:0 0 30px rgba(201,32,32,.70)}
+}
+.cwmeta{font-size:11px;color:#bbb;margin-top:10px;letter-spacing:.06em}
+.cwmeta b{color:#e8e8e8}
 </style>
 </head>
 <body>
@@ -269,9 +291,12 @@ body{background:#060606;color:#ddd;font-family:'Courier New',monospace}
     <div class="gsub">Choose your nation · Deploy your forces · Conquer</div>
     <div id="lmsg">▸ LOADING WORLD DATA...</div>
     <div id="lbwrap"><div id="lbar"></div></div>
-    <div id="continueWarWrap" style="display:none;margin-bottom:16px;text-align:center">
-      <button class="cbtn on" style="padding:10px 22px;font-size:14px" onclick="continueUnfinishedWar()">▶ CONTINUE WAR</button>
-      <div id="continueWarMeta" style="font-size:11px;color:#888;margin-top:6px"></div>
+    <div id="continueWarWrap" style="display:none">
+      <div class="cwcard">
+        <div class="cwtag">⚠ War In Progress</div>
+        <button class="cbtn cwbtn" onclick="continueUnfinishedWar()">▶ CONTINUE WAR</button>
+        <div class="cwmeta" id="continueWarMeta"></div>
+      </div>
     </div>
     <div id="selwrap">
       <div class="sgrp">
@@ -501,9 +526,12 @@ const C = {
   // Large offensives now inflict operationally consequential losses.  The
   // ratio model still determines who advances; these values only raise the
   // human cost per resolved frontage action (roughly 7× the former pace).
-  ATTACKER_LOSS_FRAC:   0.000210,
-  DEFENDER_LOSS_FRAC:   0.000322,
-  COUNTER_LOSS_FRAC:    0.000154,
+  // Re-tuned back UP to brutal-war levels — every resolved frontage action
+  // costs both sides a clearly visible slice of the engaged armies, so big
+  // battles leave huge casualty figures on the board.
+  ATTACKER_LOSS_FRAC:   0.00085,
+  DEFENDER_LOSS_FRAC:   0.00120,
+  COUNTER_LOSS_FRAC:    0.00070,
   TROOPS_PER_FLIP_FRAC: 0.000030,  // commit pool drains ~0.003 % of attacker max per flip
 
   // ─ troop-ratio combat scaling — steep on purpose: a big numerical
@@ -519,7 +547,7 @@ const C = {
   // ── attacker / defender casualty modifiers ─
   // Fixed role bias that stacks with the dynamic strength-gap premium in
   // casualtyMults(): attacking bleeds ~10% more, defending ~10% less.
-  MAX_STRONGER_EXTRA: 0.45, // stronger side takes at most 45% more losses than the weaker
+  MAX_STRONGER_EXTRA: 0.85, // stronger side can bleed up to 85% more than the weaker
   ATK_CAS_MULT: 1.10,
   DEF_CAS_MULT: 0.90,
 
@@ -658,6 +686,9 @@ const EMPIRES = {
   EMP_UMY: { name:'Umayyad Caliphate', members:['SYR','IRQ','SAU','JOR','LBN','ISR','PSE','EGY','LBY','TUN','DZA','MAR','ESP','PRT','IRN','TUR','ARM','AZE','TKM','UZB','PAK'] },
   EMP_ABB: { name:'Abbasid Caliphate', members:['IRQ','SYR','SAU','JOR','LBN','ISR','PSE','IRN','EGY','LBY','TUN','DZA','MAR','TKM','UZB','TJK','AFG','PAK','YEM','OMN','ARE','QAT','BHR','KWT'] },
   EMP_MNG: { name:'Mongol Empire', members:['MNG','CHN','KAZ','RUS','IRN','IRQ','TUR','AFG','PAK','KGZ','UZB','TKM','TJK','AZE','ARM','GEO'] },
+  // ── Modern-day blocs, playable as ONE country each ──
+  EMP_EU:  { name:'European Union', members:['AUT','BEL','BGR','HRV','CYP','CZE','DNK','EST','FIN','FRA','DEU','GRC','HUN','IRL','ITA','LVA','LTU','LUX','MLT','NLD','POL','PRT','ROU','SVK','SVN','ESP','SWE'] },
+  EMP_NATO:{ name:'NATO', members:['USA','CAN','GBR','FRA','DEU','ITA','ESP','PRT','NLD','BEL','LUX','DNK','NOR','ISL','GRC','TUR','POL','CZE','SVK','HUN','ROU','BGR','HRV','SVN','EST','LVA','LTU','ALB','MKD','MNE','FIN','SWE'] },
 };
 
 // Empires have no entry on flagcdn (it only serves real, currently-existing
@@ -695,6 +726,10 @@ const EMPIRE_FLAG_SVG = {
   EMP_UMY: `<rect width="60" height="40" fill="#f7f6f0" stroke="#a9a397" stroke-width="1"/>`,
   EMP_ABB: `<rect width="60" height="40" fill="#0c0c0c"/>`,
   EMP_MNG: `<rect width="60" height="40" fill="#0b3d78"/><g stroke="#f2f2f2" stroke-width="2.2" fill="none" stroke-linecap="round"><line x1="30" y1="9" x2="30" y2="31"/><line x1="21" y1="16" x2="30" y2="9"/><line x1="39" y1="16" x2="30" y2="9"/><line x1="21" y1="31" x2="39" y2="31"/></g>`,
+  // EU — the real circle of twelve gold stars on the Union blue.
+  EMP_EU: `<rect width="60" height="40" fill="#003399"/><polygon points="30.00,6.40 30.52,7.79 32.00,7.85 30.84,8.77 31.23,10.20 30.00,9.38 28.77,10.20 29.16,8.77 28.00,7.85 29.48,7.79" fill="#FFCC00"/><polygon points="35.75,7.94 36.27,9.33 37.75,9.39 36.59,10.31 36.98,11.74 35.75,10.92 34.52,11.74 34.91,10.31 33.75,9.39 35.23,9.33" fill="#FFCC00"/><polygon points="39.96,12.15 40.48,13.54 41.96,13.60 40.80,14.52 41.19,15.95 39.96,15.13 38.72,15.95 39.12,14.52 37.96,13.60 39.44,13.54" fill="#FFCC00"/><polygon points="41.50,17.90 42.02,19.29 43.50,19.35 42.34,20.27 42.73,21.70 41.50,20.88 40.27,21.70 40.66,20.27 39.50,19.35 40.98,19.29" fill="#FFCC00"/><polygon points="39.96,23.65 40.48,25.04 41.96,25.10 40.80,26.02 41.19,27.45 39.96,26.63 38.72,27.45 39.12,26.02 37.96,25.10 39.44,25.04" fill="#FFCC00"/><polygon points="35.75,27.86 36.27,29.25 37.75,29.31 36.59,30.23 36.98,31.66 35.75,30.84 34.52,31.66 34.91,30.23 33.75,29.31 35.23,29.25" fill="#FFCC00"/><polygon points="30.00,29.40 30.52,30.79 32.00,30.85 30.84,31.77 31.23,33.20 30.00,32.38 28.77,33.20 29.16,31.77 28.00,30.85 29.48,30.79" fill="#FFCC00"/><polygon points="24.25,27.86 24.77,29.25 26.25,29.31 25.09,30.23 25.48,31.66 24.25,30.84 23.02,31.66 23.41,30.23 22.25,29.31 23.73,29.25" fill="#FFCC00"/><polygon points="20.04,23.65 20.56,25.04 22.04,25.10 20.88,26.02 21.28,27.45 20.04,26.63 18.81,27.45 19.20,26.02 18.04,25.10 19.52,25.04" fill="#FFCC00"/><polygon points="18.50,17.90 19.02,19.29 20.50,19.35 19.34,20.27 19.73,21.70 18.50,20.88 17.27,21.70 17.66,20.27 16.50,19.35 17.98,19.29" fill="#FFCC00"/><polygon points="20.04,12.15 20.56,13.54 22.04,13.60 20.88,14.52 21.28,15.95 20.04,15.13 18.81,15.95 19.20,14.52 18.04,13.60 19.52,13.54" fill="#FFCC00"/><polygon points="24.25,7.94 24.77,9.33 26.25,9.39 25.09,10.31 25.48,11.74 24.25,10.92 23.02,11.74 23.41,10.31 22.25,9.39 23.73,9.33" fill="#FFCC00"/>`,
+  // NATO — the alliance compass rose on Atlantic blue.
+  EMP_NATO: `<rect width="60" height="40" fill="#004990"/><g stroke="#ffffff" stroke-width="1" fill="none"><circle cx="30" cy="20" r="6.2"/><line x1="30" y1="2" x2="30" y2="13.8"/><line x1="30" y1="26.2" x2="30" y2="38"/><line x1="14" y1="20" x2="23.8" y2="20"/><line x1="36.2" y1="20" x2="46" y2="20"/></g><polygon points="30,3.6 32.4,20 30,36.4 27.6,20" fill="#ffffff"/><polygon points="30,17.4 32,20 30,22.6 28,20" fill="#004990"/>`,
 };
 function empireFlagDataUri(code){
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 40">${EMPIRE_FLAG_SVG[code]||''}</svg>`;
@@ -1206,11 +1241,20 @@ function showContinueWarBarIfAny(){
   const when = new Date(save.savedAtMs).toLocaleString();
   const pName = S.countries[save.selections?.player]?.name || save.selections?.player || key;
   const eName = S.countries[save.selections?.enemy?.[0]]?.name || save.selections?.enemy?.[0] || '?';
-  $('continueWarMeta').textContent = `${pName} vs ${eName} · saved ${when}`;
+  // Richer meta line: matchup + both sides' losses so far + save date, so
+  // it's obvious at a glance exactly which war is being resumed.
+  const pCas = fmt(save.cas?.p || 0), eCas = fmt(save.cas?.e || 0);
+  $('continueWarMeta').innerHTML = `<b>${pName}</b> vs <b>${eName}</b> · losses ${pCas} – ${eCas} · saved ${when}`;
 }
 function continueUnfinishedWar(){
   const key = $('continueWarWrap').dataset.playerKey;
-  if (key) continueWarFor(key);
+  if (!key) return;
+  // Keep the card in sync: resuming consumes the surfaced save, and any
+  // other unfinished war on disk takes its place next time the menu opens.
+  const wrap = $('continueWarWrap');
+  wrap.style.display = 'none';
+  delete wrap.dataset.playerKey;
+  continueWarFor(key);
 }
 
 // ── SYSTEM B: POST-WAR CAMPAIGN (NEW GAME / CONTINUE) ───────────────
@@ -2419,7 +2463,23 @@ function maybeStartPlayerAI(){
   S.playerAiNextRollAt = now + C.PLAYER_AI_CHECK_MS;
   const pc = S.countries[S.pCode], ec = S.countries[S.eCode];
   if (!pc || !ec) return;
-  applyAiDecision('player', decideFactionAction('player'));
+  // Continuity fix: AFK must keep the war moving by ITSELF. If there is no
+  // active order and the standing brain found nothing worth committing to,
+  // sweep every front sector for ANY genuine enemy contact and press the
+  // best one anyway — analyze → attack → re-evaluate → attack again, forever.
+  const decision = decideFactionAction('player');
+  if (decision.action === 'hold' && !S.attackOrder){
+    const groups = frontGroups('player').filter(g => g.some(c => frontierTouching(c, 'enemy')));
+    if (groups.length){
+      const g = groups[Math.floor(Math.random()*groups.length)];
+      const focus = pickFocusCellInGroup(g, 'player');
+      if (focus){
+        applyAiDecision('player', { action:'attack', front:g, ratio:1.0 });
+        return;
+      }
+    }
+  }
+  applyAiDecision('player', decision);
 }
 
 // ── COMBAT TICK ───────────────────────────────────────────────────
@@ -2551,7 +2611,9 @@ function casualtyMults(effAttacker, effDefender){
   const engagedScale = Math.max(1, Math.min(effAttacker, effDefender));
   const stronger = Math.max(effAttacker, effDefender);
   const gap = Math.log(Math.max(1, stronger) / engagedScale); // 0 at parity, grows with the gap
-  const extra = clamp(0.05 + 0.35 * (1 - 1/(1 + 1.2*gap)), 0.05, 0.40);
+  // Steeper strength-gap premium: +10% at a small edge, climbing fast toward
+  // +75% at an overwhelming one (10M-vs-500K-style fights bleed the giant).
+  const extra = clamp(0.10 + 0.65 * (1 - 1/(1 + 1.2*gap)), 0.10, 0.75);
   const atkStronger = effAttacker >= effDefender;
   // Dynamic strength premium (stronger side) stacked with the fixed
   // attacker/defender role modifier.
@@ -2581,7 +2643,15 @@ function runPlayerPush({ attackerCountry, defenderCountry, frontiers, changed })
   // and let troops hold the new line. The commit pool stays reserved
   // so the enemy counter still has opposition to press against.
   const nearFocus = nearestAnyCell(focus);
-  if (!nearFocus || nearFocus.owner !== 'enemy') return;
+  if (!nearFocus) return;
+  if (nearFocus.owner !== 'enemy'){
+    // The objective has been taken — the push is complete. In AFK mode,
+    // release the attack order (refunding unspent troops) so the player-side
+    // AI re-evaluates the battlefield and issues a FRESH attack order on its
+    // next decision cycle instead of idling on a finished objective forever.
+    if (S.autoMode) clearAttackOrder(true);
+    return;
+  }
 
   // Defender garrison bonus from a MOVE order:
   //   troops the player has mustered defensively make cells near the
@@ -4221,6 +4291,7 @@ function startLoops() {
 boot();
 </script>
 <script defer src="https://static.cloudflareinsights.com/beacon.min.js/v833ccba57c9e4d2798f2e76cebdd09a11778172276447" integrity="sha512-57MDmcccJXYtNnH+ZiBwzC4jb2rvgVCEokYN+L/nLlmO8rfYT/gIpW2A569iJ/3b+0UEasghjuZH/ma3wIs/EQ==" data-cf-beacon='{"version":"2024.11.0","token":"4edd5f8ec12a48cfa682ab8261b80a79","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
+<script type="module" src="https://static.cloudflareinsights.com/beacon.min.js/v31edd6df95cf4e85bb4c19e7a9bdbcba1788362987495" integrity="sha512-iIg7k2xntmwu6/uSb5tpc/hySgZc4eoL31yB29W6tJFo2akwjPWcEqnCEdJvGexCL0KEQwVYv5BlowfhVz26hg==" data-cf-beacon='{"version":"2024.11.0","token":"4edd5f8ec12a48cfa682ab8261b80a79","spa":2}' crossorigin="anonymous"></script>
 <script type="module" src="https://static.cloudflareinsights.com/beacon.min.js/v31edd6df95cf4e85bb4c19e7a9bdbcba1788362987495" integrity="sha512-iIg7k2xntmwu6/uSb5tpc/hySgZc4eoL31yB29W6tJFo2akwjPWcEqnCEdJvGexCL0KEQwVYv5BlowfhVz26hg==" data-cf-beacon='{"version":"2024.11.0","token":"4edd5f8ec12a48cfa682ab8261b80a79","spa":2}' crossorigin="anonymous"></script>
 </body>
 </html>
